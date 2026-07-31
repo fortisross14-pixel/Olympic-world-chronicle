@@ -1,0 +1,19 @@
+{
+  "name": "olympics-chronicle",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node scripts/final_smoke_test.mjs"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "vite": "^6.1.0"
+  }
+}
