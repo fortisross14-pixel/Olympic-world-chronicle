@@ -32,7 +32,7 @@ export async function loadGame() {
       request.onerror = () => reject(request.error)
     })
     database.close()
-    if (value?.version === 2) return value
+    if (value?.version >= 2) return value
   } catch (error) {
     console.warn('IndexedDB load failed; checking legacy storage.', error)
   }
@@ -40,7 +40,7 @@ export async function loadGame() {
   try {
     const legacy = localStorage.getItem(LEGACY_KEY)
     const parsed = legacy ? JSON.parse(legacy) : null
-    return parsed?.version === 2 ? parsed : null
+    return parsed?.version >= 2 ? parsed : null
   } catch (error) {
     console.warn('Legacy save load failed.', error)
     return null
