@@ -288,33 +288,65 @@ function generateCycleEvents({ edition, investments, random }) {
   let updated = investments.map((investment) => ({ ...investment, allocations: { ...investment.allocations } }))
   const eligibleCountries = updated.filter((investment) => (countryByCode(investment.countryCode).firstYear || 1896) <= edition.year)
   const availableSports = sportCatalog.filter((sport) => (sport.introduced || 1896) <= edition.year)
-  const selectedArchetypes = worldEventPool.slice().sort((a, b) => (hashText(`${edition.year}-${a.id}`) % 10000) - (hashText(`${edition.year}-${b.id}`) % 10000)).slice(0, 6)
-  selectedArchetypes.forEach((archetype, index) => {
+  const severityPlan = [
+    ...Array(6).fill('huge'),
+    ...Array(12).fill('big'),
+    ...Array(30).fill('significant'),
+    ...Array(54).fill('mild'),
+  ]
+  const severityMultiplier = { mild: 0.22, significant: 0.55, big: 1.15, huge: 2.35 }
+
+  severityPlan.forEach((severity, index) => {
+    const archetype = worldEventPool[(hashText(`${edition.year}-${stateSafeSeed(edition)}-${index}`) + index * 37) % worldEventPool.length]
     const target = pick(random, eligibleCountries)
     const sport = pick(random, availableSports)
-    if (!target || !sport) return
+    if (!target || !sport || !archetype) return
+    const multiplier = severityMultiplier[severity]
+    const impact = {
+      overall: Math.round(archetype.overall * multiplier),
+      youth: Math.round(archetype.youth * multiplier),
+      facilities: Math.round(archetype.facilities * multiplier),
+      sport: Math.round(archetype.sport * multiplier),
+      delegation: archetype.delegation && severity !== 'mild'
+        ? 1 - (1 - archetype.delegation) * Math.min(1.8, multiplier)
+        : 1,
+    }
     const investment = updated.find((item) => item.countryCode === target.countryCode)
-    const sportName = sport.name
-    investment.overall = clamp(investment.overall + archetype.overall, 12, 99)
-    investment.youth = clamp(investment.youth + archetype.youth, 10, 99)
-    investment.facilities = clamp(investment.facilities + archetype.facilities, 10, 99)
-    investment.allocations[sport.id] = clamp((investment.allocations[sport.id] || investment.overall) + archetype.sport, 10, 99)
-    if (!investment.focusSports.includes(sport.id) && archetype.sport > 8) investment.focusSports = [...investment.focusSports.slice(0, 5), sport.id]
-    if (archetype.delegation) modifiers[target.countryCode] = Math.min(modifiers[target.countryCode] || 1, archetype.delegation)
+    investment.overall = clamp(investment.overall + impact.overall, 10, 99)
+    investment.youth = clamp(investment.youth + impact.youth, 8, 99)
+    investment.facilities = clamp(investment.facilities + impact.facilities, 8, 99)
+    investment.allocations[sport.id] = clamp((investment.allocations[sport.id] || investment.overall) + impact.sport, 8, 99)
+    if (severity === 'huge' && impact.sport >= 15 && !investment.focusSports.includes(sport.id)) {
+      investment.focusSports = [sport.id, ...investment.focusSports.filter((id) => id !== sport.id)].slice(0, 6)
+    } else if (severity === 'big' && impact.sport > 9 && !investment.focusSports.includes(sport.id)) {
+      investment.focusSports = [...investment.focusSports.slice(0, 5), sport.id]
+    }
+    if (impact.delegation < 1) modifiers[target.countryCode] = Math.min(modifiers[target.countryCode] || 1, impact.delegation)
     const country = countryByCode(target.countryCode)
     events.push({
-      id: `cycle-${edition.year}-${archetype.id}-${index}`,
+      id: `cycle-${edition.year}-${severity}-${archetype.id}-${index}`,
       archetypeId: archetype.archetypeId || archetype.id,
       tone: archetype.tone,
+      severity,
+      featured: severity === 'huge',
       headline: archetype.title,
-      body: `${country.flag} ${country.name}: ${archetype.body} ${archetype.sport ? `${sportName} is the programme most directly affected.` : ''}`,
+      body: `${country.name}: ${archetype.body} ${impact.sport ? `${sport.name} is the programme most directly affected.` : ''}`,
       countryCode: target.countryCode,
       sportId: sport.id,
-      impact: { overall: archetype.overall, youth: archetype.youth, facilities: archetype.facilities, sport: archetype.sport, delegation: archetype.delegation || 1 },
+      impact,
       poolSize: WORLD_EVENT_POOL_SIZE,
     })
   })
-  return { events, investments: updated, delegationModifiers: modifiers }
+  return {
+    events,
+    featuredEvents: events.filter((event) => event.featured),
+    investments: updated,
+    delegationModifiers: modifiers,
+  }
+}
+
+function stateSafeSeed(edition) {
+  return hashText(`${edition.year}-${edition.host || ''}-${edition.countryCode || ''}`)
 }
 
 function qualificationRouteForSport(sport, year) {
@@ -334,47 +366,78 @@ function qualificationNames(sport, year) {
   return names.slice(0, year < 1920 ? 1 : year < 1950 ? 2 : 3)
 }
 
-function generateQualificationCircuit({ edition, events, athletes, records, seed }) {
+function generateQualificationCircuit({ edition, events, athletes, candidatePool = athletes, records, seed }) {
   const random = mulberry32(seed + edition.year * 1597 + 41)
   const activeSports = [...new Set(events.map((event) => event.sportId))].map(sportById).filter(Boolean)
   const competitions = []
+  const rankingsBySport = {}
   let updatedRecords = [...records]
+  const qualifiedIds = new Set(athletes.map((athlete) => athlete.id))
+  const candidateMap = new Map(candidatePool.map((athlete) => [athlete.id, {
+    ...athlete,
+    qualificationHistory: [...(athlete.qualificationHistory || [])],
+  }]))
 
   activeSports.forEach((sport, sportIndex) => {
-    const sportAthletes = athletes.filter((athlete) => athlete.sportId === sport.id)
-    if (!sportAthletes.length) return
-    const names = qualificationNames(sport, edition.year)
     const relevantEvents = events.filter((event) => event.sportId === sport.id)
-    const orderedAthletes = sportAthletes.slice().sort((a, b) => hashText(`${edition.year}-${sport.id}-${a.id}`) - hashText(`${edition.year}-${sport.id}-${b.id}`))
-    const athleteGroups = names.map(() => [])
-    orderedAthletes.forEach((athlete, index) => athleteGroups[index % names.length].push(athlete))
+    const candidates = [...candidateMap.values()]
+      .filter((athlete) => athlete.status === 'active' && athlete.sportId === sport.id)
+    if (!candidates.length) return
+    const names = qualificationNames(sport, edition.year)
+    const rows = candidates.map((athlete) => {
+      const event = athlete.events.map((id) => events.find((item) => item.id === id)).find(Boolean) || relevantEvents[0]
+      const rowRandom = mulberry32(seed + edition.year * 71 + hashText(`${sport.id}-${athlete.id}`))
+      const value = event ? performanceFor({ ...athlete, pressure: clamp((athlete.pressure || 1) * 0.985, 0.82, 1.08) }, event, rowRandom, edition.year) : null
+      const qualificationIndex = round(athlete.currentRating * 10 + athlete.form * 22 + (rowRandom() - 0.5) * 38, 1)
+      return {
+        athleteId: athlete.id,
+        countryCode: athlete.countryCode,
+        athleteName: athlete.name,
+        rating: athlete.currentRating,
+        rarity: athlete.rarity,
+        qualified: qualifiedIds.has(athlete.id),
+        qualificationIndex,
+        eventId: event?.id || null,
+        eventKey: event?.recordKey || null,
+        eventName: event?.name || sport.name,
+        value,
+      }
+    }).sort((a, b) => b.qualificationIndex - a.qualificationIndex || b.rating - a.rating)
+      .map((row, index) => ({ ...row, rank: index + 1 }))
+    rankingsBySport[sport.id] = rows
+
+    const rowGroups = names.map(() => [])
+    rows.forEach((row) => {
+      const groupIndex = hashText(`${edition.year}-${sport.id}-${row.athleteId}`) % names.length
+      rowGroups[groupIndex].push(row)
+    })
     const eventGroups = names.map(() => [])
     relevantEvents.forEach((event, index) => eventGroups[index % names.length].push(event))
 
     names.forEach((name, nameIndex) => {
       const venue = hostCities[(hashText(`${edition.year}-${sport.id}-${nameIndex}`) + sportIndex) % hostCities.length]
-      const qualifiedAthletes = athleteGroups[nameIndex]
+      const competitionRows = rowGroups[nameIndex]
+        .slice()
+        .sort((a, b) => b.qualificationIndex - a.qualificationIndex)
+        .map((row, index) => ({ ...row, competitionRank: index + 1 }))
+      const qualifiedRows = competitionRows.filter((row) => row.qualified)
       const coveredEvents = eventGroups[nameIndex].length ? eventGroups[nameIndex] : relevantEvents.slice(0, 1)
       const recordBreaks = []
       const recordCandidates = coveredEvents.filter((event) => event.recordEligible)
       const sampleCount = Math.min(recordCandidates.length, nameIndex === 0 ? Math.max(1, Math.ceil(recordCandidates.length * 0.16)) : Math.max(1, Math.ceil(recordCandidates.length * 0.06)))
       recordCandidates.slice().sort((a, b) => hashText(`${name}-${a.recordKey}`) - hashText(`${name}-${b.recordKey}`)).slice(0, sampleCount).forEach((event, eventIndex) => {
-        const field = eventField(event, sportAthletes).slice(0, 16)
-        if (!field.length) return
-        const ranked = field.map((entry) => {
-          const athlete = entry.athlete || sportAthletes.find((item) => item.id === entry.athleteId)
-          return { ...entry, athlete, value: performanceFor({ ...athlete, pressure: clamp((athlete?.pressure || 1) * 0.99, 0.82, 1.08) }, event, random, edition.year) }
-        }).sort((a, b) => event.lowerIsBetter ? a.value - b.value : b.value - a.value)
-        const winner = ranked[0]
+        const eligible = competitionRows.filter((row) => row.eventKey === event.recordKey && row.qualified).slice(0, 16)
+        const winnerRow = eligible[0]
+        if (!winnerRow) return
         const standing = updatedRecords.filter((record) => record.type === 'WR' && record.eventKey === event.recordKey).at(-1)
-        const establish = !standing
-        const attemptBreak = establish || random() < (winner.athlete?.rarity === 'generational' ? 0.24 : winner.athlete?.rarity === 'legend' ? 0.14 : 0.055)
-        if (attemptBreak && recordIsBetter(event, winner.value, standing)) {
+        const athlete = candidateMap.get(winnerRow.athleteId)
+        const attemptBreak = !standing || random() < (athlete?.rarity === 'generational' ? 0.24 : athlete?.rarity === 'legend' ? 0.14 : 0.055)
+        if (attemptBreak && recordIsBetter(event, winnerRow.value, standing)) {
           const record = {
             id: `rec-WR-Q-${edition.year}-${sport.id}-${nameIndex}-${eventIndex}`,
             type: 'WR', eventKey: event.recordKey, eventId: event.id, eventName: event.name, sportId: event.sportId,
-            eventMetric: event.metric, eventUnit: event.unit, eventBaseline: event.benchmark, value: winner.value,
-            athleteId: winner.athleteId, athleteName: winner.displayName, countryCode: winner.countryCode,
+            eventMetric: event.metric, eventUnit: event.unit, eventBaseline: event.benchmark, value: winnerRow.value,
+            athleteId: winnerRow.athleteId, athleteName: winnerRow.athleteName, countryCode: winnerRow.countryCode,
             year: Math.max(edition.year - 2 + nameIndex, 1896), host: venue.city,
             source: 'qualification', competition: name,
           }
@@ -382,11 +445,10 @@ function generateQualificationCircuit({ edition, events, athletes, records, seed
           recordBreaks.push(record)
         }
       })
-      const topAthletes = qualifiedAthletes.slice().sort((a, b) => b.currentRating - a.currentRating).slice(0, 5).map((athlete) => athlete.id)
-      const countryPlaces = [...qualifiedAthletes.reduce((map, athlete) => map.set(athlete.countryCode, (map.get(athlete.countryCode) || 0) + 1), new Map()).entries()]
+      const countryPlaces = [...qualifiedRows.reduce((map, row) => map.set(row.countryCode, (map.get(row.countryCode) || 0) + 1), new Map()).entries()]
         .map(([countryCode, places]) => ({ countryCode, places }))
         .sort((a, b) => b.places - a.places || a.countryCode.localeCompare(b.countryCode))
-      competitions.push({
+      const competition = {
         id: `qual-${edition.year}-${sport.id}-${nameIndex}`,
         name,
         sportId: sport.id,
@@ -394,32 +456,59 @@ function generateQualificationCircuit({ edition, events, athletes, records, seed
         hostCountryCode: venue.countryCode,
         year: Math.max(edition.year - 3 + nameIndex, 1896),
         route: qualificationRouteForSport(sport, edition.year),
-        participants: Math.max(qualifiedAthletes.length + 8, Math.round(qualifiedAthletes.length * (1.5 + random()))),
-        qualified: qualifiedAthletes.length,
-        qualifiedAthleteIds: qualifiedAthletes.map((athlete) => athlete.id),
+        participants: competitionRows.length,
+        qualified: qualifiedRows.length,
+        qualifiedAthleteIds: qualifiedRows.map((row) => row.athleteId),
         eventKeys: coveredEvents.map((event) => event.recordKey),
         eventNames: coveredEvents.map((event) => event.name),
         countryPlaces,
         recordBreaks,
-        topAthleteIds: topAthletes,
+        topAthleteIds: qualifiedRows.slice(0, 5).map((row) => row.athleteId),
+        resultRows: competitionRows,
         status: 'completed',
+      }
+      competitions.push(competition)
+      competitionRows.forEach((row) => {
+        const athlete = candidateMap.get(row.athleteId)
+        if (!athlete) return
+        const historyRow = {
+          phase: 'qualification',
+          editionYear: edition.year,
+          competitionId: competition.id,
+          competition: name,
+          hostCity: venue.city,
+          hostCountryCode: venue.countryCode,
+          year: competition.year,
+          sportId: sport.id,
+          eventId: row.eventId,
+          eventKey: row.eventKey,
+          eventName: row.eventName,
+          rank: row.competitionRank,
+          globalRank: row.rank,
+          value: row.value,
+          qualificationIndex: row.qualificationIndex,
+          qualified: row.qualified,
+        }
+        athlete.qualificationHistory = [...athlete.qualificationHistory.filter((item) => !(item.editionYear === edition.year && item.sportId === sport.id)), historyRow]
+        if (row.qualified) athlete.qualificationPath = {
+          competitionId: competition.id,
+          name,
+          hostCity: venue.city,
+          hostCountryCode: venue.countryCode,
+          year: competition.year,
+          route: competition.route,
+          rank: row.competitionRank,
+          globalRank: row.rank,
+          value: row.value,
+          eventName: row.eventName,
+        }
       })
     })
   })
 
-  const pathwayByAthlete = new Map()
-  competitions.forEach((competition) => {
-    ;(competition.qualifiedAthleteIds || []).forEach((athleteId) => pathwayByAthlete.set(athleteId, {
-      competitionId: competition.id,
-      name: competition.name,
-      hostCity: competition.hostCity,
-      hostCountryCode: competition.hostCountryCode,
-      year: competition.year,
-      route: competition.route,
-    }))
-  })
-  const qualifiedAthleteRows = athletes.map((athlete) => ({ ...athlete, qualificationPath: pathwayByAthlete.get(athlete.id) || null }))
-  return { competitions, records: updatedRecords, athletes: qualifiedAthleteRows }
+  const updatedCandidates = [...candidateMap.values()]
+  const updatedQualified = athletes.map((athlete) => candidateMap.get(athlete.id) || athlete)
+  return { competitions, rankingsBySport, records: updatedRecords, athletes: updatedQualified, candidatePool: updatedCandidates }
 }
 
 function eraFor(year) {
@@ -766,7 +855,22 @@ function updateAthlete(athlete, edition, eventsBySport, random) {
 
 function allocateDelegations(edition, nocs, modifiers = {}) {
   const source = sourceForYear(editionDelegations, edition.year, 2020)
-  const weights = nocs.map((code) => ({ code, weight: Math.max(0.2, (source[code] || (hashText(`${edition.year}-${code}`) % 14) + 1) * (modifiers[code] || 1) * (edition.countryCode === code ? 1.12 : 1)) }))
+  const historicalBlueprint = editionBlueprints.find((item) => item.year === edition.year)
+  const historicalHost = historicalBlueprint?.countryCode || Object.entries(source).sort((a, b) => b[1] - a[1])[0]?.[0]
+  const sourceValues = nocs.map((code) => source[code] || 0).filter((value) => value > 0).sort((a, b) => a - b)
+  const median = sourceValues[Math.floor(sourceValues.length / 2)] || 4
+  const maxSource = sourceValues.at(-1) || median * 3
+  const proceduralHost = edition.status === 'procedural' && edition.countryCode && edition.countryCode !== historicalHost
+  const weights = nocs.map((code) => {
+    let sourceWeight = source[code] || (hashText(`${edition.year}-${code}`) % 14) + 1
+    if (proceduralHost && code === historicalHost) sourceWeight = Math.min(sourceWeight, median * 1.35)
+    if (proceduralHost && code === edition.countryCode) {
+      const hostFloor = edition.year < 1920 ? Math.max(median * 6, maxSource * 0.34) : Math.max(median * 4, maxSource * 0.22)
+      sourceWeight = Math.max(sourceWeight, hostFloor)
+    }
+    if (!proceduralHost && code === edition.countryCode) sourceWeight *= 1.12
+    return { code, weight: Math.max(0.2, sourceWeight * (modifiers[code] || 1)) }
+  })
   const target = Math.max(nocs.length, edition.athletes)
   const result = Object.fromEntries(nocs.map((code) => [code, 1]))
   const available = target - nocs.length
@@ -796,6 +900,11 @@ function generateAthletesForEdition({ edition, events, investments, priorPool = 
   })
   const sourceNocs = [...(sourceForYear(editionNocs, edition.year, 2024) || countries.filter((c) => c.active).map((c) => c.code))]
   const targetNations = edition.nations || 206
+  if (edition.countryCode) {
+    const hostIndex = sourceNocs.indexOf(edition.countryCode)
+    if (hostIndex >= 0) sourceNocs.splice(hostIndex, 1)
+    sourceNocs.unshift(edition.countryCode)
+  }
   const eligibleFillers = countries.filter((country) => !sourceNocs.includes(country.code) && country.code !== 'ZZX' && (country.firstYear || 1896) <= edition.year).sort((a,b)=>hashText(`${edition.year}-${a.code}`)-hashText(`${edition.year}-${b.code}`))
   while (sourceNocs.length < targetNations && eligibleFillers.length) sourceNocs.push(eligibleFillers.shift().code)
   const nocs = sourceNocs.slice(0, targetNations)
@@ -835,6 +944,22 @@ function generateAthletesForEdition({ edition, events, investments, priorPool = 
       countryCount += 1
     }
   })
+
+  // Build a wider active pathway so qualification contains real misses, late bloomers and comeback candidates.
+  const pathwayTarget = Math.max(12, Math.round(edition.athletes * (edition.year < 1920 ? 0.22 : 0.34)))
+  let pathwayCreated = 0
+  while (pathwayCreated < pathwayTarget) {
+    const countryCode = pick(random, nocs)
+    const gender = edition.womenPct <= 0 ? 'M' : random() * 100 < edition.womenPct ? 'F' : 'M'
+    const sportId = chooseSport(countryCode, eventsBySport, investments, random)
+    const athlete = createAthlete({ countryCode, gender, sportId, edition, eventsBySport, investments, random, usedNames, serial })
+    serial += 1
+    athlete.qualified = false
+    athlete.appearances = 0
+    athlete.appearanceYears = []
+    updatedPool.push(athlete)
+    pathwayCreated += 1
+  }
 
   // Ensure every event has depth and at least a few genuine medal-level specialists.
   const eventById = new Map(events.map((event) => [event.id, event]))
@@ -978,25 +1103,72 @@ function recordIsBetter(event, value, standing) {
   return event.lowerIsBetter ? value < standing.value : value > standing.value
 }
 
-export function simulateFinal({ edition, event, athletes, records, random }) {
-  const field = eventField(event, athletes)
-  const ranked = field.map((entry) => {
-    const proxy = entry.athlete || { currentRating: entry.rating, form: 1, pressure: 1 }
-    const value = event.metric === 'wins' ? entry.rating + (random()-0.5)*18 : performanceFor(proxy, event, random, edition.year)
-    return { ...entry, value }
-  }).sort((a,b)=>event.lowerIsBetter ? a.value-b.value : b.value-a.value)
-  const medals = ['gold','silver','bronze']
-  const podium = ranked.slice(0,3).map((entry,index)=>({ ...entry, place:index+1, medal:medals[index] }))
-  const newRecords=[]
-  if (event.recordEligible && podium[0]) {
-    for (const type of ['WR','OR']) {
-      const standing=records.filter(r=>r.type===type && r.eventKey===event.recordKey).sort((a,b)=>b.year-a.year).find(r=>r.standing!==false) || records.filter(r=>r.type===type && r.eventKey===event.recordKey).at(-1)
-      if (recordIsBetter(event,podium[0].value,standing)) {
-        newRecords.push({ id:`rec-${type}-${edition.year}-${event.id}`,type,eventKey:event.recordKey,eventId:event.id,eventName:event.name,sportId:event.sportId,eventMetric:event.metric,eventUnit:event.unit,eventBaseline:event.benchmark,value:podium[0].value,athleteId:podium[0].athleteId,athleteName:podium[0].displayName,countryCode:podium[0].countryCode,year:edition.year,host:edition.host,source:'olympics',competition:`${edition.host} ${edition.year}` })
-      }
+function stripAthlete(entry) {
+  const { athlete, ...rest } = entry
+  return rest
+}
+
+function recordsForRound({ edition, event, ranked, records, sessionId, stage }) {
+  const newRecords = []
+  if (!event.recordEligible || !ranked[0]) return newRecords
+  for (const type of ['WR', 'OR']) {
+    const standing = records.filter((record) => record.type === type && record.eventKey === event.recordKey).at(-1)
+    if (recordIsBetter(event, ranked[0].value, standing)) {
+      newRecords.push({
+        id: `rec-${type}-${edition.year}-${sessionId}`,
+        type,
+        eventKey: event.recordKey,
+        eventId: event.id,
+        eventName: event.name,
+        sportId: event.sportId,
+        eventMetric: event.metric,
+        eventUnit: event.unit,
+        eventBaseline: event.benchmark,
+        value: ranked[0].value,
+        athleteId: ranked[0].athleteId,
+        athleteName: ranked[0].displayName,
+        countryCode: ranked[0].countryCode,
+        year: edition.year,
+        host: edition.host,
+        source: 'olympics',
+        competition: `${edition.host} ${edition.year} · ${stage}`,
+        stage,
+      })
     }
   }
-  return { podium, results: ranked.slice(0,Math.min(16,ranked.length)), newRecords }
+  return newRecords
+}
+
+function simulateRound({ edition, event, entries, records, random, session }) {
+  const stagePressure = session.isFinal ? 1.012 : /semi/i.test(session.stage) ? 1.002 : 0.986
+  const ranked = entries.map((entry) => {
+    const proxy = entry.athlete || { currentRating: entry.rating, form: 1, pressure: 1 }
+    const adjusted = { ...proxy, pressure: clamp((proxy.pressure || 1) * stagePressure, 0.82, 1.1) }
+    const value = event.metric === 'wins' ? entry.rating + (random() - 0.5) * 18 : performanceFor(adjusted, event, random, edition.year)
+    return { ...entry, value }
+  }).sort((a, b) => event.lowerIsBetter ? a.value - b.value : b.value - a.value)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }))
+  const newRecords = recordsForRound({ edition, event, ranked, records, sessionId: session.id, stage: session.stage })
+  return { ranked, newRecords }
+}
+
+function advancementCount(event, session, fieldSize) {
+  if (session.isFinal) return 0
+  const sport = sportById(event.sportId)
+  if (/semi/i.test(session.stage)) return Math.min(fieldSize, sport.category === 'bracket' || sport.category === 'team' ? 4 : 8)
+  if (/quarter/i.test(session.stage)) return Math.min(fieldSize, 8)
+  if (/round of 16/i.test(session.stage)) return Math.min(fieldSize, 8)
+  if (/round of 32/i.test(session.stage)) return Math.min(fieldSize, 16)
+  if (/group/i.test(session.stage)) return Math.min(fieldSize, Math.max(4, Math.ceil(fieldSize / 2)))
+  return Math.min(fieldSize, Math.max(8, Math.ceil(fieldSize / 2)))
+}
+
+export function simulateFinal({ edition, event, athletes, records, random }) {
+  const session = { id: `${event.id}-final`, stage: 'Final', isFinal: true }
+  const simulation = simulateRound({ edition, event, entries: eventField(event, athletes), records, random, session })
+  const medals = ['gold', 'silver', 'bronze']
+  const podium = simulation.ranked.slice(0, 3).map((entry, index) => ({ ...entry, place: index + 1, medal: medals[index] }))
+  return { podium, results: simulation.ranked.slice(0, Math.min(64, simulation.ranked.length)), newRecords: simulation.newRecords }
 }
 
 function medalTableFromResults(results) {
@@ -1017,38 +1189,160 @@ function makeNews(event,podium,newRecords,edition) {
   return stories
 }
 
+function buildPostGamesMagazine(state, athletes, results) {
+  const allRankings = Object.values(state.qualificationRankings || {}).flat()
+  const rankByAthlete = new Map(allRankings.map((row) => [row.athleteId, row]))
+  const multiMedalists = athletes.filter((athlete) => (athlete.medals.gold + athlete.medals.silver + athlete.medals.bronze) >= 2)
+    .sort((a, b) => scoreMedals(b.medals) - scoreMedals(a.medals) || b.currentRating - a.currentRating)
+    .slice(0, 12)
+  const surprises = results.map((result) => {
+    const winner = athletes.find((athlete) => athlete.id === result.podium[0]?.athleteId)
+    const ranking = rankByAthlete.get(winner?.id)
+    return winner ? { athleteId: winner.id, eventId: result.eventId, qualificationRank: ranking?.rank || null, rarity: winner.rarity } : null
+  }).filter(Boolean).filter((row) => (row.qualificationRank || 0) > 18 || ['common', 'uncommon', 'rare'].includes(row.rarity)).slice(0, 12)
+  const medalistIds = new Set(results.flatMap((result) => result.podium.map((row) => row.athleteId)))
+  const disappointments = allRankings.filter((row) => row.qualified && row.rank <= 5 && !medalistIds.has(row.athleteId)).slice(0, 12)
+  return { multiMedalistIds: multiMedalists.map((athlete) => athlete.id), surprises, disappointments }
+}
+
 export function simulateDay(state, dayToSimulate) {
   if (state.phase !== 'games' || state.phase === 'complete') return state
-  const random=mulberry32(state.seed + state.edition.year*1000 + dayToSimulate*7919 + state.results.length)
-  const athletes=state.athletes.map(a=>({ ...a, medals:{...a.medals},careerMedals:{...a.careerMedals},careerResults:[...(a.careerResults||[])] }))
-  const athleteMap=new Map(athletes.map(athlete=>[athlete.id,athlete]))
-  let records=[...state.records]
-  const results=[...state.results]
-  const news=[...state.news]
-  const schedule=state.schedule.map(item=>({...item}))
-  schedule.filter(item=>item.day===dayToSimulate && item.status==='scheduled').forEach((session)=>{
-    session.status='completed'
-    if (!session.isFinal) return
-    const event=state.events.find(item=>item.id===session.eventId)
-    if (!event || results.some(result=>result.eventId===event.id)) return
-    const simulation=simulateFinal({edition:state.edition,event,athletes,records,random})
-    simulation.podium.forEach((medalist)=>{
-      medalist.memberIds.forEach((id)=>{
-        const athlete=athleteMap.get(id)
+  const random = mulberry32(state.seed + state.edition.year * 1000 + dayToSimulate * 7919 + state.results.length)
+  const athletes = state.athletes.map((athlete) => ({
+    ...athlete,
+    medals: { ...athlete.medals },
+    careerMedals: { ...athlete.careerMedals },
+    careerResults: [...(athlete.careerResults || [])],
+    competitionHistory: [...(athlete.competitionHistory || [])],
+  }))
+  const athleteMap = new Map(athletes.map((athlete) => [athlete.id, athlete]))
+  let records = [...state.records]
+  const results = [...state.results]
+  const roundResults = [...(state.roundResults || [])]
+  const news = [...state.news]
+  const schedule = state.schedule.map((item) => ({ ...item }))
+  const eventFields = new Map()
+
+  schedule.filter((item) => item.day === dayToSimulate && item.status === 'scheduled').forEach((session) => {
+    session.status = 'completed'
+    const event = state.events.find((item) => item.id === session.eventId)
+    if (!event) return
+    if (!eventFields.has(event.id)) eventFields.set(event.id, eventField(event, athletes))
+    const baseField = eventFields.get(event.id)
+    const prior = [...roundResults].reverse().find((row) => row.eventId === event.id)
+    const priorIds = new Set(prior?.qualifiedIds || [])
+    const entries = prior?.qualifiedIds?.length ? baseField.filter((entry) => priorIds.has(entry.athleteId)) : baseField
+    const simulation = simulateRound({ edition: state.edition, event, entries, records, random, session })
+    const advanceCount = advancementCount(event, session, simulation.ranked.length)
+    const qualifiedIds = session.isFinal ? [] : simulation.ranked.slice(0, advanceCount).map((entry) => entry.athleteId)
+    const qualifiedSet = new Set(qualifiedIds)
+    const medals = ['gold', 'silver', 'bronze']
+    const podium = session.isFinal ? simulation.ranked.slice(0, 3).map((entry, index) => ({ ...entry, place: index + 1, medal: medals[index] })) : []
+
+    simulation.ranked.forEach((entry, index) => {
+      const medal = podium.find((row) => row.athleteId === entry.athleteId)?.medal || null
+      ;(entry.memberIds || [entry.athleteId]).forEach((id) => {
+        const athlete = athleteMap.get(id)
         if (!athlete) return
-        athlete.medals[medalist.medal]+=1
-        athlete.careerMedals[medalist.medal]+=1
-        athlete.careerResults.push({year:state.edition.year,host:state.edition.host,eventName:event.name,eventKey:event.recordKey,sportId:event.sportId,medal:medalist.medal,value:medalist.value})
+        athlete.competitionHistory.push({
+          phase: 'olympics',
+          editionYear: state.edition.year,
+          host: state.edition.host,
+          eventId: event.id,
+          eventKey: event.recordKey,
+          eventName: event.name,
+          sportId: event.sportId,
+          stage: session.stage,
+          day: dayToSimulate,
+          session: session.session,
+          rank: index + 1,
+          value: entry.value,
+          advanced: session.isFinal ? false : qualifiedSet.has(entry.athleteId),
+          medal,
+        })
       })
     })
-    records=[...records,...simulation.newRecords]
-    results.push({id:`${state.edition.year}-${event.id}`,editionYear:state.edition.year,eventId:event.id,eventKey:event.recordKey,sportId:event.sportId,day:dayToSimulate,podium:simulation.podium.map(({athlete,...m})=>m),fullResults:simulation.results.map(({athlete,...r})=>r),newRecords:simulation.newRecords.map((record)=>({id:record.id,type:record.type,value:record.value,eventKey:record.eventKey,athleteId:record.athleteId,athleteName:record.athleteName,countryCode:record.countryCode}))})
-    news.unshift(...makeNews(event,simulation.podium,simulation.newRecords,state.edition).map(item=>({...item,day:dayToSimulate})))
+
+    records = [...records, ...simulation.newRecords]
+    roundResults.push({
+      id: `${state.edition.year}-${session.id}`,
+      sessionId: session.id,
+      editionYear: state.edition.year,
+      eventId: event.id,
+      eventKey: event.recordKey,
+      sportId: event.sportId,
+      stage: session.stage,
+      day: dayToSimulate,
+      session: session.session,
+      isFinal: session.isFinal,
+      results: simulation.ranked.map((entry) => {
+        const medal = podium.find((row) => row.athleteId === entry.athleteId)?.medal || null
+        const advanced = session.isFinal ? false : qualifiedSet.has(entry.athleteId)
+        return {
+          ...stripAthlete(entry),
+          advanced,
+          medal,
+          outcome: medal || (advanced ? 'advanced' : session.isFinal ? 'finalist' : 'eliminated'),
+        }
+      }),
+      qualifiedIds,
+      newRecords: simulation.newRecords.map((record) => ({ id: record.id, type: record.type, value: record.value, eventKey: record.eventKey, athleteId: record.athleteId, athleteName: record.athleteName, countryCode: record.countryCode, stage: record.stage })),
+    })
+
+    if (simulation.newRecords.length) {
+      simulation.newRecords.forEach((record) => news.unshift({
+        id: `record-${record.id}`,
+        day: dayToSimulate,
+        category: record.type === 'WR' ? 'World Record' : 'Olympic Record',
+        headline: `${record.athleteName} breaks the ${record.type} in ${event.name}`,
+        body: `${record.athleteName} produces ${formatPerformance(record.value, event)} during the ${session.stage}, before the medal outcome is known.`,
+        sportId: event.sportId,
+        countryCode: record.countryCode,
+      }))
+    }
+
+    if (!session.isFinal || results.some((result) => result.eventId === event.id)) return
+    podium.forEach((medalist) => {
+      ;(medalist.memberIds || [medalist.athleteId]).forEach((id) => {
+        const athlete = athleteMap.get(id)
+        if (!athlete) return
+        athlete.medals[medalist.medal] += 1
+        athlete.careerMedals[medalist.medal] += 1
+        athlete.careerResults.push({ year: state.edition.year, host: state.edition.host, eventName: event.name, eventKey: event.recordKey, sportId: event.sportId, medal: medalist.medal, value: medalist.value })
+      })
+    })
+    results.push({
+      id: `${state.edition.year}-${event.id}`,
+      editionYear: state.edition.year,
+      eventId: event.id,
+      eventKey: event.recordKey,
+      sportId: event.sportId,
+      day: dayToSimulate,
+      podium: podium.map(stripAthlete),
+      fullResults: simulation.ranked.map(stripAthlete),
+      newRecords: simulation.newRecords.map((record) => ({ id: record.id, type: record.type, value: record.value, eventKey: record.eventKey, athleteId: record.athleteId, athleteName: record.athleteName, countryCode: record.countryCode, stage: record.stage })),
+    })
+    news.unshift(...makeNews(event, podium, simulation.newRecords, state.edition).map((item) => ({ ...item, day: dayToSimulate })))
   })
-  const currentDay=Math.min(state.edition.days+1,dayToSimulate+1)
-  const complete=currentDay>state.edition.days || schedule.every(item=>item.status==='completed')
-  const updatedPool=state.careerPool.map(poolAthlete=>athleteMap.get(poolAthlete.id)||poolAthlete)
-  return {...state,athletes,careerPool:updatedPool,records,results,news,schedule,currentDay:complete?state.edition.days+1:currentDay,phase:complete?'complete':'games',medalTable:medalTableFromResults(results)}
+
+  const currentDay = Math.min(state.edition.days + 1, dayToSimulate + 1)
+  const complete = currentDay > state.edition.days || schedule.every((item) => item.status === 'completed')
+  const updatedPool = state.careerPool.map((poolAthlete) => athleteMap.get(poolAthlete.id) || poolAthlete)
+  const nextState = {
+    ...state,
+    athletes,
+    careerPool: updatedPool,
+    records,
+    results,
+    roundResults,
+    news,
+    schedule,
+    currentDay: complete ? state.edition.days + 1 : currentDay,
+    phase: complete ? 'complete' : 'games',
+    medalTable: medalTableFromResults(results),
+  }
+  if (complete) nextState.magazine = { ...(state.magazine || {}), postGames: buildPostGamesMagazine(nextState, athletes, results) }
+  return nextState
 }
 
 export function simulateToEnd(state) {
@@ -1080,11 +1374,14 @@ function buildStateForEdition({ edition, seed, priorState = null }) {
   const cycle = generateCycleEvents({ edition, investments, random })
   investments = cycle.investments
   const events = generateEditionEvents(edition)
+  const priorActivePool = [...new Map(
+    [...(priorState?.careerPool || []), ...(priorState?.athletes || [])].map((athlete) => [athlete.id, athlete]),
+  ).values()]
   const generated = generateAthletesForEdition({
     edition,
     events,
     investments,
-    priorPool: priorState?.careerPool || [],
+    priorPool: priorActivePool,
     seed,
     delegationModifiers: cycle.delegationModifiers,
   })
@@ -1092,18 +1389,41 @@ function buildStateForEdition({ edition, seed, priorState = null }) {
     edition,
     events,
     athletes: generated.athletes,
+    candidatePool: generated.careerPool,
     records: priorState?.records || [],
     seed,
   })
   const qualifiedAthletes = qualification.athletes || generated.athletes
-  const qualifiedById = new Map(qualifiedAthletes.map((athlete) => [athlete.id, athlete]))
-  const careerPool = generated.careerPool.map((athlete) => qualifiedById.get(athlete.id) || athlete)
+  const candidateById = new Map((qualification.candidatePool || generated.careerPool).map((athlete) => [athlete.id, athlete]))
+  const fullCareerPool = generated.careerPool.map((athlete) => candidateById.get(athlete.id) || athlete)
+  const qualifiedIds = new Set(qualifiedAthletes.map((athlete) => athlete.id))
+  // Qualified athletes already live in state.athletes. Keep only the wider active pathway here
+  // to avoid serializing the same 10,000+ athlete objects twice in modern editions.
+  const careerPool = fullCareerPool.filter((athlete) => !qualifiedIds.has(athlete.id))
   const schedule = createSchedule(edition, events, qualifiedAthletes)
   const archive = [...(priorState?.athleteArchive || []), ...generated.newlyRetired]
     .sort((a, b) => scoreMedals(b.careerMedals) - scoreMedals(a.careerMedals) || b.baseSkill - a.baseSkill)
     .filter((athlete, index, arr) => arr.findIndex((item) => item.id === athlete.id) === index)
     .slice(0, 3500)
   const changes = programmeChangesFor(edition, priorState)
+  const rarityRank = { generational: 5, legend: 4, epic: 3, rare: 2, uncommon: 1, common: 0 }
+  const eliteNewcomers = fullCareerPool.filter((athlete) => athlete.appearanceYears?.[0] === edition.year && rarityRank[athlete.rarity] >= 3)
+    .sort((a, b) => b.baseSkill - a.baseSkill).slice(0, 30)
+  const eliteRetirements = generated.newlyRetired.filter((athlete) => rarityRank[athlete.rarity] >= 3).slice(0, 30)
+  const keyCompetitions = events.map((event) => {
+    const field = eventField(event, qualifiedAthletes)
+    const elite = field.map((entry) => entry.athlete).filter(Boolean).filter((athlete) => rarityRank[athlete.rarity] >= 3)
+    return { eventId: event.id, athleteIds: elite.map((athlete) => athlete.id), eliteCount: elite.length }
+  }).filter((row) => row.eliteCount >= 2).sort((a, b) => b.eliteCount - a.eliteCount).slice(0, 12)
+  const finalGames = qualifiedAthletes.filter((athlete) => rarityRank[athlete.rarity] >= 3 && athlete.retirementAge - athlete.age <= 4)
+    .sort((a, b) => b.baseSkill - a.baseSkill).slice(0, 16).map((athlete) => athlete.id)
+  const failedElite = fullCareerPool.filter((athlete) => athlete.status === 'active' && !athlete.qualified && rarityRank[athlete.rarity] >= 3)
+    .sort((a, b) => b.currentRating - a.currentRating).slice(0, 20).map((athlete) => athlete.id)
+  const magazine = {
+    lifeChanges: { spawnedIds: eliteNewcomers.map((athlete) => athlete.id), retiredIds: eliteRetirements.map((athlete) => athlete.id) },
+    preGames: { keyCompetitions, finalGamesIds: finalGames, failedQualifierIds: failedElite },
+    postGames: null,
+  }
   const qualificationRecordStories = qualification.competitions
     .flatMap((competition) => competition.recordBreaks.map((record) => ({
       id: `qualification-record-${record.id}`,
@@ -1116,7 +1436,7 @@ function buildStateForEdition({ edition, seed, priorState = null }) {
     })))
     .slice(0, 8)
   return {
-    version: 3,
+    version: 4,
     seed,
     edition: { ...edition, events: events.length, sports: new Set(events.map((event) => event.sportId)).size },
     currentDay: 1,
@@ -1127,9 +1447,13 @@ function buildStateForEdition({ edition, seed, priorState = null }) {
     athleteArchive: archive,
     schedule,
     results: [],
+    roundResults: [],
     records: qualification.records,
     qualificationCompetitions: qualification.competitions,
+    qualificationRankings: qualification.rankingsBySport,
     worldEvents: cycle.events,
+    featuredWorldEvents: cycle.featuredEvents,
+    magazine,
     news: [
       ...qualificationRecordStories,
       {
@@ -1176,6 +1500,84 @@ export function createInitialState(seed = 18960406, demoDays = 0) {
     for (let day = 1; day <= demoDays; day += 1) state = simulateDay(state, day)
   }
   return state
+}
+
+function compactHistoricalRound(round) {
+  return {
+    id: round.id,
+    sessionId: round.sessionId,
+    eventId: round.eventId,
+    eventKey: round.eventKey,
+    sportId: round.sportId,
+    stage: round.stage,
+    day: round.day,
+    session: round.session,
+    isFinal: round.isFinal,
+    qualifiedIds: round.qualifiedIds || [],
+    newRecords: round.newRecords || [],
+    // Historical rows are columnar to keep decades of heats practical in IndexedDB:
+    // athlete id, NOC, display name, mark, rank, advanced flag, medal.
+    results: (round.results || []).map((row) => [
+      row.athleteId,
+      row.countryCode,
+      row.displayName || '',
+      row.value,
+      row.rank,
+      row.advanced ? 1 : 0,
+      row.medal || '',
+    ]),
+  }
+}
+
+function compactHistoricalQualifier(competition) {
+  return {
+    id: competition.id,
+    name: competition.name,
+    sportId: competition.sportId,
+    host: competition.hostCity,
+    hostCity: competition.hostCity,
+    hostCountryCode: competition.hostCountryCode,
+    year: competition.year,
+    route: competition.route,
+    participants: competition.participants,
+    places: competition.qualifiedAthleteIds?.length || competition.qualified || 0,
+    qualified: competition.qualified,
+    eventKeys: competition.eventKeys || [],
+    eventNames: competition.eventNames || [],
+    countryPlaces: competition.countryPlaces || [],
+    recordBreaks: competition.recordBreaks || [],
+    topAthleteIds: competition.topAthleteIds || [],
+    // Keep a useful leaderboard without duplicating the entire cycle-wide ranking archive.
+    resultRows: (competition.resultRows || []).slice(0, 32).map((row) => ({
+      athleteId: row.athleteId,
+      countryCode: row.countryCode,
+      athleteName: row.athleteName,
+      eventKey: row.eventKey,
+      eventName: row.eventName,
+      value: row.value,
+      rank: row.rank,
+      competitionRank: row.competitionRank,
+      qualified: row.qualified,
+    })),
+  }
+}
+
+function compactHistoricalRankings(rankings = {}) {
+  return Object.fromEntries(Object.entries(rankings).map(([sportId, rows]) => [
+    sportId,
+    rows.slice(0, 24).map((row) => ({
+      athleteId: row.athleteId,
+      countryCode: row.countryCode,
+      athleteName: row.athleteName,
+      rarity: row.rarity,
+      qualified: row.qualified,
+      qualificationIndex: row.qualificationIndex,
+      eventKey: row.eventKey,
+      eventName: row.eventName,
+      value: row.value,
+      rank: row.rank,
+    })),
+  ]))
 }
 
 function historyEntryFromState(state) {
@@ -1227,8 +1629,13 @@ function historyEntryFromState(state) {
     countryStats,
     programmeChanges: state.programmeChanges,
     medalResults,
-    qualificationCompetitions: state.qualificationCompetitions || [],
-    worldEvents: state.worldEvents || [],
+    roundResults: (state.roundResults || []).map(compactHistoricalRound),
+    qualificationCompetitions: (state.qualificationCompetitions || []).map(compactHistoricalQualifier),
+    qualificationRankings: compactHistoricalRankings(state.qualificationRankings || {}),
+    worldEventSummary: (state.worldEvents || []).reduce((summary, event) => ({ ...summary, [event.severity]: (summary[event.severity] || 0) + 1 }), {}),
+    worldEvents: state.featuredWorldEvents || [],
+    featuredWorldEvents: state.featuredWorldEvents || [],
+    magazine: state.magazine || null,
   }
 }
 

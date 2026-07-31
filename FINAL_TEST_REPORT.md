@@ -1,72 +1,79 @@
-# Olympics Chronicle V3 — Final Validation Report
+# Olympics Chronicle V4 — Final Validation Report
 
 Validation performed on July 31, 2026.
 
 ## Static validation
 
 - `src/engine.js`: Node syntax check passed.
-- `src/worldData.js`: Node syntax check passed.
-- `src/data.js`: Node syntax check passed.
 - `src/storage.js`: Node syntax check passed.
-- `src/historicalData.js`: Node syntax check passed.
-- `src/App.jsx`, `src/Icons.jsx`, `src/main.jsx`: JSX parse/transpilation check passed with TypeScript's React JSX transformer.
+- `src/App.jsx`, `src/Icons.jsx`, `src/main.jsx`: React JSX parse/transpilation check passed with TypeScript's JSX transformer.
+- Direct Unicode flag output was removed from application views; the reusable flag component supplies image and NOC-code fallback rendering.
 
 ## Full alternate-universe stress test
 
-A deterministic universe was advanced from Athens 1896 through the 2028 Olympiad, then continued into 2032 and 2036.
+A deterministic universe was simulated from Athens 1896 through the 2028 Olympiad and then advanced into the 2032 host cycle.
 
-- Olympic editions completed through 2028: **34**
-- Medal events simulated: **6,501**
-- Podium medals generated: **19,503**
-- Qualification competitions generated: **2,117**
-- Cycle-impact events generated: **204**
-- Completed procedural host elections: **33**
+- Olympic editions validated: **34**
+- Medal events completed: **6,507**
+- Complete Olympic rounds retained: **20,130**
+- Podium medals generated: **19,521**
+- Country developments generated: **3,468**
+- Huge magazine events: **6 per cycle**
+- Procedural host elections completed: **33**
 - Consecutive host-continent violations: **0**
+
+## Results validation
+
+- Every scheduled session created one round-result object.
+- Every round contained competitor results.
+- Every result contained a finite performance and rank.
+- Preliminary rounds, heats, qualification rounds, groups, brackets, semifinals and finals were retained.
 - Every final produced gold, silver and bronze.
-- Every edition matched its configured athlete and delegation total.
-- Every athlete had a valid procedural name, country, sport, base talent, current rating and rating history.
-- Every athlete had a named qualification pathway.
-- Qualification-place totals reconciled exactly to the final athlete field.
-- Every Olympic discipline was covered by a qualification competition.
-- Host-selected additions respected sport-era safeguards.
-- Daily simulation advanced exactly one competition day.
-- Every result stored a record-notification collection.
-- Medal tables reconciled to three medals per event.
-- Historical entries retained both medal results and qualification circuits.
-- Athlete careers and returning Olympians persisted between editions.
-- Qualification world records and Olympic WR/OR lineages persisted.
-- Procedural continuation reached 2032 and 2036 successfully.
+- Medal tables reconciled to exactly three podium medals per event.
+- Athlete competition histories retained edition, event, round, day, rank, mark, advancement and medal.
+- Post-Games magazine data was created after every completed edition.
 
-## Deterministic 2028 universe snapshot
+## Qualification validation
 
-Because the host process is procedural, this test universe selected **Toronto, Canada** for 2028.
+- Every edition produced named qualifying competitions.
+- Every Olympic discipline was covered by a qualification route.
+- Qualification places reconciled exactly to the Olympic athlete field.
+- Every qualified athlete stored a named qualification pathway.
+- Sport rankings included athletes who failed to qualify.
+- Every qualifying competition contained browsable result standings.
+- Qualification-source records remained in the permanent WR/OR lineage.
 
-- Medal events: **352**
-- Sports: **52**
-- Olympic athletes: **10,500**
-- Delegations: **206**
-- Active career pool: **14,175**
-- Retained athlete archive: **3,500**
-- Completed historical editions in archive: **33**
-- Qualification competitions for the cycle: **156**
-- World/cycle events displayed: **6**
-- Record-lineage entries: **2,162**
-- Qualification-source records: **117**
-- Olympic-source records: **2,045**
-- Record notifications generated during the 2028 Games: **49**
-- Serialized active state: approximately **45.9 MB** before browser structured-clone storage.
+## World events and magazine validation
 
-IndexedDB is used because this scale is inappropriate for a single localStorage entry.
+Each cycle generated:
 
-## Host and scenario validation
+- **54 mild events**
+- **30 significant events**
+- **12 big events**
+- **6 huge events**
 
-- Every host race began with four unique candidate cities.
-- All candidate cities were outside the previous host continent.
+Only huge events populated the featured magazine layer. Pre-Games magazine structures included elite key events, likely final appearances and elite failed qualifiers. Post-Games structures included multiple medalists, surprises and disappointments.
+
+## Host validation
+
+- Every election began with four unique candidates outside the previous host continent.
 - Exactly one city was eliminated in each of three rounds.
-- The selected city became the next edition host and supplied its country theme.
-- The host nation received an investment legacy of at least 18 points before later-cycle decay.
-- The world-event pool contains **144 concrete scenario variants**, exceeding the requested 100-event threshold.
+- The winning city, country, theme and programme were applied to the next edition.
+- Host investment legacy was applied before later-cycle decay.
+- The procedural host country appeared in the athlete field.
+- The first post-Athens edition specifically confirmed that a non-French procedural host received a larger delegation than France, eliminating the inherited Paris 1900 bias.
 
-## Packaging limitation
+## Archive and save-size validation
 
-A final `npm run build` could not be executed in the artifact environment because the configured npm registry did not provide the required React/Vite packages and direct public-registry access was unavailable. Source syntax, JSX parsing, archive integrity and the deterministic 1896–2036 engine test passed. Run `npm install && npm run build` in a normal development environment before deployment.
+The original uncompressed V4 prototype produced approximately 381 MB of JSON-equivalent data by 2028. The final archive design:
+
+- removes duplicated qualified athletes from the wider career pool;
+- compacts completed round rows;
+- limits historical qualifier leaderboards while retaining current-cycle full standings;
+- summarizes background world events while preserving huge magazine stories.
+
+The resulting 2028 state measured approximately **133 MB using Node's structured-clone-compatible V8 serializer**. IndexedDB is therefore required; localStorage is not used for the main save.
+
+## Production-build limitation
+
+`npm run build` could not execute in the artifact environment because the React/Vite packages were not installed and the environment's npm registry did not provide them. The source engine test, Node syntax validation, JSX transpilation validation and archive integrity checks passed. Run `npm install && npm run build` in a normal development environment before deployment.

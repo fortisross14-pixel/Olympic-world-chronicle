@@ -20,6 +20,7 @@ import { clearGame, loadGame, saveGame } from './storage.js'
 
 const navItems = [
   ['home', 'Overview', 'home'],
+  ['magazine', 'Olympic Magazine', 'news'],
   ['host', 'Host Selection', 'trophy'],
   ['qualification', 'Qualification', 'flag'],
   ['games', 'Olympic Games', 'calendar'],
@@ -42,6 +43,48 @@ const rarityLabels = {
 
 function medalScore(medals = {}) {
   return (medals.gold || 0) * 5 + (medals.silver || 0) * 3 + (medals.bronze || 0)
+}
+
+function iso2FromFlag(flag = '') {
+  const points = [...flag].map((char) => char.codePointAt(0))
+  if (points.length !== 2 || points.some((point) => point < 0x1F1E6 || point > 0x1F1FF)) return null
+  return points.map((point) => String.fromCharCode(point - 0x1F1E6 + 65)).join('').toLowerCase()
+}
+
+function CountryFlag({ country, className = '', size = 'normal' }) {
+  if (!country) return <span className={`country-flag flag-fallback ${className}`}>—</span>
+  const iso2 = iso2FromFlag(country.flag)
+  if (!iso2) return <span className={`country-flag flag-fallback ${className} ${size}`}>{country.code}</span>
+  return (
+    <span className={`country-flag ${className} ${size}`} title={country.name}>
+      <img
+        src={`https://flagcdn.com/w40/${iso2}.png`}
+        srcSet={`https://flagcdn.com/w80/${iso2}.png 2x`}
+        alt={`${country.name} flag`}
+        onError={(event) => {
+          event.currentTarget.style.display = 'none'
+          const fallback = event.currentTarget.nextElementSibling
+          if (fallback) fallback.style.display = 'inline-flex'
+        }}
+      />
+      <span className="country-flag-code">{country.code}</span>
+    </span>
+  )
+}
+
+function athleteById(state, id) {
+  return state.athletes.find((athlete) => athlete.id === id)
+    || state.careerPool?.find((athlete) => athlete.id === id)
+    || state.athleteArchive?.find((athlete) => athlete.id === id)
+}
+
+function recordsForEventRounds(roundResults = [], eventId) {
+  const unique = new Map()
+  roundResults
+    .filter((round) => round.eventId === eventId)
+    .flatMap((round) => round.newRecords || [])
+    .forEach((record) => unique.set(record.id, record))
+  return [...unique.values()]
 }
 
 function App() {
@@ -163,6 +206,7 @@ function App() {
               setSelectedEvent={setSelectedEvent}
             />
           )}
+          {page === 'magazine' && <MagazineView state={state} setSelectedAthlete={setSelectedAthlete} setSelectedCountry={setSelectedCountry} setSelectedEvent={setSelectedEvent} />}
           {page === 'host' && <HostSelectionView state={state} runBallot={runHostBallot} beginNextCycle={beginNextCycle} />}
           {page === 'qualification' && <QualificationView state={state} setSelectedCountry={setSelectedCountry} setSelectedAthlete={setSelectedAthlete} />}
           {page === 'games' && (
@@ -212,7 +256,7 @@ function Sidebar({ page, setPage, open, close, edition }) {
         </div>
 
         <div className="edition-chip">
-          <span className="edition-flag">{edition.flag}</span>
+          <CountryFlag country={countryByCode(edition.countryCode)} className="edition-flag" size="large" />
           <span><b>{edition.host} {edition.year}</b><small>Games of the Olympiad</small></span>
         </div>
 
@@ -319,12 +363,12 @@ function Overview({ state, setPage, setSelectedAthlete, setSelectedCountry, setS
 
       <section className="panel world-events-panel">
         <SectionTitle icon="news" title="Events shaping the next Games" />
-        <p className="section-intro">Six developments are drawn each Olympic cycle from a pool of {state.worldEvents?.[0]?.poolSize || 144}+ geopolitical, economic and sporting situations. Their effects are already included in investment, facilities, qualification depth and athlete generation.</p>
+        <p className="section-intro">Six huge developments reach the front page, while roughly 100 mild, significant and major changes continue in the background. Every effect is already included in investment, facilities, qualification depth and athlete generation.</p>
         <div className="world-event-grid">
-          {(state.worldEvents || []).map((event) => {
+          {(state.featuredWorldEvents || state.worldEvents?.filter((event) => event.severity === 'huge') || []).map((event) => {
             const country = countryByCode(event.countryCode)
             const sport = sportById(event.sportId)
-            return <article className={`world-event-card ${event.tone}`} key={event.id}><div className="world-event-meta"><span>{country?.flag} {country?.name}</span><b>{event.tone}</b></div><h3>{event.headline}</h3><p>{event.body}</p><div className="world-event-impact"><span><Icon name={sport?.icon || 'medal'} size={15} />{sport?.name}</span><span>{event.impact.overall >= 0 ? '+' : ''}{event.impact.overall} investment</span><span>{event.impact.youth >= 0 ? '+' : ''}{event.impact.youth} youth</span></div></article>
+            return <article className={`world-event-card ${event.tone}`} key={event.id}><div className="world-event-meta"><span><CountryFlag country={country} /> {country?.name}</span><b>{event.severity || event.tone}</b></div><h3>{event.headline}</h3><p>{event.body}</p><div className="world-event-impact"><span><Icon name={sport?.icon || 'medal'} size={15} />{sport?.name}</span><span>{event.impact.overall >= 0 ? '+' : ''}{event.impact.overall} investment</span><span>{event.impact.youth >= 0 ? '+' : ''}{event.impact.youth} youth</span></div></article>
           })}
         </div>
       </section>
@@ -385,7 +429,7 @@ function Overview({ state, setPage, setSelectedAthlete, setSelectedCountry, setS
                 <button key={athlete.id} onClick={() => setSelectedAthlete(athlete.id)}>
                   <span className="rank-number">{index + 1}</span>
                   <span className={`athlete-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span>
-                  <span className="athlete-line"><b>{athlete.name}</b><small>{country?.flag} {country?.name} · {sport?.name}</small></span>
+                  <span className="athlete-line"><b>{athlete.name}</b><small><CountryFlag country={country} /> {country?.name} · {sport?.name}</small></span>
                   <span className="mini-medals"><i>🥇 {athlete.medals.gold}</i><i>🥈 {athlete.medals.silver}</i><i>🥉 {athlete.medals.bronze}</i></span>
                 </button>
               )
@@ -397,6 +441,28 @@ function Overview({ state, setPage, setSelectedAthlete, setSelectedCountry, setS
   )
 }
 
+function MagazineView({ state, setSelectedAthlete, setSelectedCountry, setSelectedEvent }) {
+  const [tab, setTab] = useState(state.phase === 'complete' ? 'post' : 'pre')
+  const magazine = state.magazine || { lifeChanges: {}, preGames: {}, postGames: null }
+  const resolve = (id) => athleteById(state, id)
+  const spawned = (magazine.lifeChanges?.spawnedIds || []).map(resolve).filter(Boolean)
+  const retired = (magazine.lifeChanges?.retiredIds || []).map(resolve).filter(Boolean)
+  const finalGames = (magazine.preGames?.finalGamesIds || []).map(resolve).filter(Boolean)
+  const failed = (magazine.preGames?.failedQualifierIds || []).map(resolve).filter(Boolean)
+  const keyCompetitions = (magazine.preGames?.keyCompetitions || []).map((row) => ({ ...row, event: state.events.find((event) => event.id === row.eventId), athletes: row.athleteIds.map(resolve).filter(Boolean) }))
+  const multi = (magazine.postGames?.multiMedalistIds || []).map(resolve).filter(Boolean)
+  const surprises = (magazine.postGames?.surprises || []).map((row) => ({ ...row, athlete: resolve(row.athleteId), event: state.events.find((event) => event.id === row.eventId) })).filter((row) => row.athlete)
+  const disappointments = (magazine.postGames?.disappointments || []).map((row) => ({ ...row, athlete: resolve(row.athleteId) })).filter((row) => row.athlete)
+  const hugeEvents = state.featuredWorldEvents || state.worldEvents?.filter((event) => event.severity === 'huge') || []
+  const background = state.worldEvents || []
+  const athleteCard = (athlete, detail) => { const country = countryByCode(athlete.countryCode); const sport = sportById(athlete.sportId); return <button className="magazine-athlete-card" key={athlete.id} onClick={() => setSelectedAthlete(athlete.id)}><span className={`athlete-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{athlete.name}</b><small><CountryFlag country={country} /> {country.name} · {sport?.name}</small><em>{detail}</em></span><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span></button> }
+  return <div className="page-stack"><section className="page-heading magazine-heading"><div><span className="eyebrow">The Olympic Chronicle</span><h2>{state.edition.host} {state.edition.year} Magazine</h2><p>The four-year cycle now has its own narrative layer: national shocks, new stars, retirements, qualification failures, events loaded with elite talent, final appearances and the stories that defined the Games.</p></div><div className="heading-badge"><Icon name="news" /><span><b>{background.length}</b><small>cycle developments</small></span></div></section><section className="panel magazine-tabs"><button className={tab === 'cycle' ? 'active' : ''} onClick={() => setTab('cycle')}>World & investment</button><button className={tab === 'life' ? 'active' : ''} onClick={() => setTab('life')}>Athlete life</button><button className={tab === 'pre' ? 'active' : ''} onClick={() => setTab('pre')}>Pre-Games</button><button className={tab === 'post' ? 'active' : ''} onClick={() => setTab('post')}>Post-Games</button></section>
+  {tab === 'cycle' && <><section className="metric-grid four"><Metric icon="news" label="Huge events" value={hugeEvents.length} detail="Front-page changes" /><Metric icon="globe" label="Background events" value={Math.max(0, background.length - hugeEvents.length)} detail="Mild to major effects" /><Metric icon="chart" label="Countries affected" value={new Set(background.map((event) => event.countryCode)).size} detail="Across the cycle" /><Metric icon="medal" label="Sports affected" value={new Set(background.map((event) => event.sportId)).size} detail="Investment can shift" /></section><section className="world-event-grid magazine-world-grid">{hugeEvents.map((event) => { const country = countryByCode(event.countryCode); const sport = sportById(event.sportId); return <article className={`world-event-card ${event.tone}`} key={event.id}><div className="world-event-meta"><button onClick={() => setSelectedCountry(event.countryCode)}><CountryFlag country={country} /> {country.name}</button><b>{event.severity}</b></div><h3>{event.headline}</h3><p>{event.body}</p><div className="world-event-impact"><span><Icon name={sport?.icon || 'medal'} size={15} />{sport?.name}</span><span>{event.impact.overall >= 0 ? '+' : ''}{event.impact.overall} investment</span><span>{event.impact.sport >= 0 ? '+' : ''}{event.impact.sport} sport</span></div></article> })}</section></>}
+  {tab === 'life' && <div className="dashboard-grid main"><section className="panel"><SectionTitle icon="sparkles" title="Epic+ athletes entering the world" /><div className="magazine-athlete-list">{spawned.map((athlete) => athleteCard(athlete, `Age ${athlete.age} · potential ${athlete.baseSkill}`))}{!spawned.length && <EmptyState icon="users" text="No Epic-or-better athlete spawned in this cycle." />}</div></section><section className="panel"><SectionTitle icon="book" title="Epic+ retirements" /><div className="magazine-athlete-list">{retired.map((athlete) => athleteCard(athlete, `${athlete.appearances} Games · ${athlete.careerMedals.gold} golds`))}{!retired.length && <EmptyState icon="users" text="No major retirement was recorded this cycle." />}</div></section></div>}
+  {tab === 'pre' && <><section className="panel"><SectionTitle icon="star" title="Key competitions to watch" /><div className="key-event-grid">{keyCompetitions.map((row) => <button key={row.eventId} onClick={() => setSelectedEvent(row.eventId)}><span className="sport-icon"><Icon name={sportById(row.event?.sportId)?.icon || 'medal'} /></span><span><b>{row.event?.name}</b><small>{row.eliteCount} Epic-or-better contenders</small><em>{row.athletes.slice(0, 3).map((athlete) => athlete.name).join(' · ')}</em></span></button>)}</div></section><div className="dashboard-grid main"><section className="panel"><SectionTitle icon="clock" title="Legends likely at their final Games" /><div className="magazine-athlete-list">{finalGames.map((athlete) => athleteCard(athlete, `Age ${athlete.age} · retirement projected at ${athlete.retirementAge}`))}{!finalGames.length && <EmptyState icon="users" text="No elite athlete is clearly approaching retirement." />}</div></section><section className="panel"><SectionTitle icon="flag" title="Epic+ athletes who failed to qualify" /><div className="magazine-athlete-list">{failed.map((athlete) => athleteCard(athlete, `Rating ${athlete.currentRating} · missed ${state.edition.host}`))}{!failed.length && <EmptyState icon="trophy" text="Every Epic-or-better active athlete qualified." />}</div></section></div></>}
+  {tab === 'post' && (state.phase !== 'complete' ? <section className="panel"><EmptyState icon="clock" text="The post-Games edition will publish after the closing ceremony." /></section> : <><div className="dashboard-grid main"><section className="panel"><SectionTitle icon="medal" title="Multiple-medal stars" /><div className="magazine-athlete-list">{multi.map((athlete) => athleteCard(athlete, `${athlete.medals.gold} gold · ${athlete.medals.silver} silver · ${athlete.medals.bronze} bronze`))}</div></section><section className="panel"><SectionTitle icon="sparkles" title="Breakthrough champions" /><div className="magazine-athlete-list">{surprises.map((row) => athleteCard(row.athlete, `${row.event?.name || 'Olympic champion'} · qualified rank ${row.qualificationRank || 'outside top list'}`))}</div></section></div><section className="panel"><SectionTitle icon="chart" title="Qualification favorites who left without a medal" /><div className="magazine-athlete-list horizontal">{disappointments.map((row) => athleteCard(row.athlete, `Qualification rank ${row.rank} · no medal`))}</div></section></>)}</div>
+}
+
 function HostSelectionView({ state, runBallot, beginNextCycle }) {
   const selection = state.hostSelection
   const last = state.lastHostSelection
@@ -404,7 +470,7 @@ function HostSelectionView({ state, runBallot, beginNextCycle }) {
     return (
       <div className="page-stack">
         <section className="page-heading"><div><span className="eyebrow">A procedural Olympic world</span><h2>Host selection</h2><p>After every Games, four cities from a different continent than the current host enter a three-round vote. Infrastructure, public support, national pathways, legacy and bid sports all matter—but the ballot retains enough uncertainty to create surprises.</p></div><div className="heading-badge"><Icon name="trophy" /><span><b>4 → 1</b><small>three ballot rounds</small></span></div></section>
-        {last ? <section className="panel last-host-selection"><SectionTitle icon="trophy" title={`Last vote: ${last.year}`} /><div className="host-winner-summary"><span className="huge-flag">{countryByCode(last.winner.countryCode)?.flag}</span><div><h3>{last.winner.city} won the Games</h3><p>{countryByCode(last.winner.countryCode)?.name} · {last.winner.continent}. Hosting now provides a large facilities and investment boost that will decay over future cycles.</p></div></div></section> : <section className="panel"><EmptyState icon="trophy" text="Athens 1896 is the only fixed host. Complete the Games to open the first procedural host race for 1900." /></section>}
+        {last ? <section className="panel last-host-selection"><SectionTitle icon="trophy" title={`Last vote: ${last.year}`} /><div className="host-winner-summary"><CountryFlag country={countryByCode(last.winner.countryCode)} className="huge-flag" size="large" /><div><h3>{last.winner.city} won the Games</h3><p>{countryByCode(last.winner.countryCode)?.name} · {last.winner.continent}. Hosting now provides a large facilities and investment boost that will decay over future cycles.</p></div></div></section> : <section className="panel"><EmptyState icon="trophy" text="Athens 1896 is the only fixed host. Complete the Games to open the first procedural host race for 1900." /></section>}
         <section className="qualification-models host-rule-grid">{[['globe','Continental rotation','The same continent can never host consecutive Summer Games.'],['country','Bid readiness','Facilities, investment and youth pathways establish the technical baseline.'],['medal','Host sports','Each bid proposes era-appropriate sports or disciplines that can enter the programme.'],['chart','Lasting legacy','Winning creates a major national investment boost that fades gradually across later cycles.']].map(([icon,title,text]) => <article key={title}><span><Icon name={icon} /></span><h3>{title}</h3><p>{text}</p></article>)}</section>
       </div>
     )
@@ -420,7 +486,7 @@ function HostSelectionView({ state, runBallot, beginNextCycle }) {
           const country = countryByCode(candidate.countryCode)
           const isWinner = candidate.id === selection.winnerId
           return <article className={`host-bid-card ${candidate.status} ${isWinner ? 'winner' : ''}`} key={candidate.id} style={{ '--bid-accent': candidate.theme?.accent || '#168b97' }}>
-            <div className="bid-card-head"><span className="large-flag">{country?.flag}</span><span><b>{candidate.city}</b><small>{country?.name} · {candidate.continent}</small></span>{isWinner ? <span className="winner-stamp">HOST</span> : candidate.status === 'eliminated' ? <span className="eliminated-stamp">OUT R{candidate.eliminatedRound}</span> : <span className="active-stamp">ACTIVE</span>}</div>
+            <div className="bid-card-head"><CountryFlag country={country} className="large-flag" size="large" /><span><b>{candidate.city}</b><small>{country?.name} · {candidate.continent}</small></span>{isWinner ? <span className="winner-stamp">HOST</span> : candidate.status === 'eliminated' ? <span className="eliminated-stamp">OUT R{candidate.eliminatedRound}</span> : <span className="active-stamp">ACTIVE</span>}</div>
             <div className="bid-score"><span>Technical bid score</span><strong>{candidate.bidScore}</strong></div>
             <div className="bid-metrics"><Progress label="Infrastructure" value={candidate.infrastructure} /><Progress label="Athlete pathway" value={candidate.pathway} /><Progress label="Public support" value={candidate.publicSupport} /><Progress label="Legacy plan" value={candidate.legacy} /></div>
             <div className="bid-sports"><small>Proposed programme influence</small><div>{candidate.proposalSports.length ? candidate.proposalSports.map((sportId) => { const sport = sportById(sportId); return <span key={sportId}><Icon name={sport?.icon || 'medal'} size={14} />{sport?.name}</span> }) : <span>Traditional programme only</span>}</div></div>
@@ -438,11 +504,19 @@ function HostSelectionView({ state, runBallot, beginNextCycle }) {
 }
 
 function QualificationView({ state, setSelectedCountry, setSelectedAthlete }) {
-  const [sportFilter, setSportFilter] = useState('all')
-  const [mode, setMode] = useState('delegations')
+  const availableSports = [...new Set([
+    ...state.athletes.map((athlete) => athlete.sportId),
+    ...Object.keys(state.qualificationRankings || {}),
+  ])].map(sportById).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name))
+  const defaultSport = availableSports.find((sport) => sport.id === 'athletics')?.id || availableSports[0]?.id || 'all'
+  const [sportFilter, setSportFilter] = useState(defaultSport)
+  const [mode, setMode] = useState('athletes')
   const [expandedCompetition, setExpandedCompetition] = useState(null)
-  const qualifiedSports = [...new Set(state.athletes.map((athlete) => athlete.sportId))].map(sportById).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name))
   const filteredAthletes = sportFilter === 'all' ? state.athletes : state.athletes.filter((athlete) => athlete.sportId === sportFilter)
+  const candidateLookup = new Map([...(state.careerPool || []), ...state.athletes].map((athlete) => [athlete.id, athlete]))
+  const rankingRows = sportFilter === 'all'
+    ? []
+    : (state.qualificationRankings?.[sportFilter] || []).map((row) => ({ ...row, athlete: candidateLookup.get(row.athleteId) })).filter((row) => row.athlete)
   const delegationMap = new Map()
   filteredAthletes.forEach((athlete) => {
     const row = delegationMap.get(athlete.countryCode) || { countryCode: athlete.countryCode, athletes: 0, sports: new Set(), generational: 0, legend: 0, epic: 0, returning: 0, averageRating: 0 }
@@ -454,48 +528,65 @@ function QualificationView({ state, setSelectedCountry, setSelectedAthlete }) {
     delegationMap.set(athlete.countryCode, row)
   })
   const visibleDelegations = [...delegationMap.values()].map((row) => ({ ...row, sports: row.sports.size, averageRating: row.averageRating / Math.max(1, row.athletes) })).sort((a, b) => b.athletes - a.athletes || b.averageRating - a.averageRating)
-  const sportRows = qualifiedSports.map((sport) => {
-    const athletes = state.athletes.filter((athlete) => athlete.sportId === sport.id)
-    return { sport, athletes: athletes.length, nations: new Set(athletes.map((athlete) => athlete.countryCode)).size, elite: athletes.filter((athlete) => ['generational', 'legend', 'epic'].includes(athlete.rarity)).length }
-  }).sort((a, b) => b.athletes - a.athletes)
-  const stars = [...filteredAthletes].sort((a, b) => b.currentRating - a.currentRating).slice(0, 12)
   const competitions = (state.qualificationCompetitions || []).filter((competition) => sportFilter === 'all' || competition.sportId === sportFilter)
   const qualificationRecords = getRecordRows(state).filter((record) => record.source === 'qualification' && (sportFilter === 'all' || record.sportId === sportFilter)).sort((a, b) => b.year - a.year)
   const routes = [...new Set(competitions.map((competition) => competition.route))]
+  const selectedSport = sportById(sportFilter)
+  const qualifiedCount = rankingRows.filter((row) => row.qualified).length
+  const eliteMisses = rankingRows.filter((row) => !row.qualified && ['generational', 'legend', 'epic'].includes(row.athlete.rarity)).length
 
   return (
     <div className="page-stack">
       <section className="page-heading">
-        <div><span className="eyebrow">Road to {state.edition.host}</span><h2>Olympic qualification</h2><p>The qualification cycle is now a navigable competition layer rather than only a generated final list. Rankings, standards, trials, continental events, world championships and host places all produce visible outcomes—and world records can fall before the opening ceremony.</p></div>
-        <div className="heading-badge"><Icon name="flag" /><span><b>{state.athletes.length}</b><small>places awarded</small></span></div>
-      </section>
-
-      <section className="metric-grid four">
-        <Metric icon="globe" label="Qualified nations" value={new Set(state.athletes.map((athlete) => athlete.countryCode)).size} detail={`${sportFilter === 'all' ? 'Across all sports' : sportById(sportFilter)?.name}`} />
-        <Metric icon="users" label="Qualified athletes" value={filteredAthletes.length.toLocaleString()} detail={sportFilter === 'all' ? `Target field: ${state.edition.athletes.toLocaleString()}` : `${visibleDelegations.length} countries in this sport`} />
-        <Metric icon="trophy" label="Qualification events" value={competitions.length} detail={`${routes.length} pathway types`} />
-        <Metric icon="record" label="Pre-Games WRs" value={qualificationRecords.length} detail="Set outside the Olympic Games" />
+        <div><span className="eyebrow">Road to {state.edition.host}</span><h2>Olympic qualification</h2><p>Select a sport to follow its complete competitive hierarchy: every active athlete, qualification index, best mark, named competition, places awarded and the exact line separating Olympians from those who missed the Games.</p></div>
+        <div className="heading-badge"><Icon name="flag" /><span><b>{state.athletes.length}</b><small>Olympic places</small></span></div>
       </section>
 
       <section className="panel qualification-toolbar">
-        <div className="view-switch"><button className={mode === 'delegations' ? 'active' : ''} onClick={() => setMode('delegations')}><Icon name="globe" size={16} /> Delegations</button><button className={mode === 'circuit' ? 'active' : ''} onClick={() => setMode('circuit')}><Icon name="calendar" size={16} /> Qualification circuit</button><button className={mode === 'records' ? 'active' : ''} onClick={() => setMode('records')}><Icon name="record" size={16} /> Qualification records</button></div>
-        <label><span>Filter every view by sport</span><select value={sportFilter} onChange={(event) => setSportFilter(event.target.value)}><option value="all">All sports</option>{qualifiedSports.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label>
+        <div className="view-switch">
+          <button className={mode === 'athletes' ? 'active' : ''} onClick={() => setMode('athletes')}><Icon name="users" size={16} /> Athlete ranking</button>
+          <button className={mode === 'circuit' ? 'active' : ''} onClick={() => setMode('circuit')}><Icon name="calendar" size={16} /> Competitions</button>
+          <button className={mode === 'delegations' ? 'active' : ''} onClick={() => setMode('delegations')}><Icon name="globe" size={16} /> Countries</button>
+          <button className={mode === 'records' ? 'active' : ''} onClick={() => setMode('records')}><Icon name="record" size={16} /> Records</button>
+        </div>
+        <label><span>Sport</span><select value={sportFilter} onChange={(event) => { setSportFilter(event.target.value); setMode(event.target.value === 'all' ? 'delegations' : 'athletes') }}><option value="all">All sports — country totals</option>{availableSports.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label>
       </section>
 
-      {mode === 'delegations' && <>
-        <section className="qualification-models">
-          {[['record','Standards & rankings','Timed and measured sports award places through standards and ranked performance lists.'],['trophy','Qualification tournaments','Team and combat sports use world, continental and intercontinental tournaments.'],['globe','Continental quotas','Regional allocation protects global representation while maintaining competitive depth.'],['flag','Host & universality','The host receives selected places and limited universality entries preserve access.']].map(([icon,title,text]) => <article key={title}><span><Icon name={icon} /></span><h3>{title}</h3><p>{text}</p></article>)}
+      <section className="metric-grid four">
+        <Metric icon="users" label="Athletes in pathway" value={rankingRows.length || filteredAthletes.length} detail={selectedSport?.name || 'All qualified athletes'} />
+        <Metric icon="flag" label="Qualified" value={sportFilter === 'all' ? filteredAthletes.length : qualifiedCount} detail={`${visibleDelegations.length} countries represented`} />
+        <Metric icon="star" label="Elite misses" value={eliteMisses} detail="Epic or better who failed" />
+        <Metric icon="record" label="Qualification WRs" value={qualificationRecords.length} detail={`${competitions.length} named competitions`} />
+      </section>
+
+      {mode === 'athletes' && sportFilter !== 'all' && (
+        <section className="panel table-panel qualification-ranking-panel">
+          <SectionTitle icon="chart" title={`${selectedSport?.name} world qualification ranking`} />
+          <p className="section-intro">The qualification index combines rating, current form and cycle performance. The mark is the athlete’s best result in their primary discipline. Open any athlete to compare this result with every Olympic round.</p>
+          <div className="responsive-table"><table><thead><tr><th className="number">Rank</th><th>Athlete</th><th>Country</th><th>Best discipline / mark</th><th className="number">Index</th><th>Qualification event</th><th>Status</th></tr></thead><tbody>{rankingRows.map((row) => {
+            const athlete = row.athlete
+            const country = countryByCode(row.countryCode)
+            const event = state.events.find((item) => item.id === row.eventId) || state.events.find((item) => item.recordKey === row.eventKey)
+            const history = athlete.qualificationHistory?.find((item) => item.editionYear === state.edition.year && item.sportId === sportFilter)
+            return <tr key={row.athleteId} onClick={() => setSelectedAthlete(row.athleteId)} className={row.qualified ? 'qualified-row' : 'missed-row'}><td className="number"><span className={`table-rank ${row.rank <= 3 ? `top-${row.rank}` : ''}`}>{row.rank}</span></td><td><span className="athlete-table-cell"><span className={`athlete-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><span><strong>{athlete.name}</strong><small className="table-subline">Rating {athlete.currentRating} · {rarityLabels[athlete.rarity]}</small></span></span></td><td><span className="country-inline"><CountryFlag country={country} />{country.name}</span></td><td><b>{row.eventName}</b><small className="table-subline">{event && row.value != null ? formatPerformance(row.value, event) : 'No comparable mark'}</small></td><td className="number"><b>{row.qualificationIndex}</b></td><td>{history?.competition || 'Olympic ranking list'}<small className="table-subline">{history ? `${history.hostCity} · rank ${history.rank}` : ''}</small></td><td>{row.qualified ? <span className="status-badge standing">Qualified</span> : <span className="status-badge broken">Missed Games</span>}</td></tr>
+          })}</tbody></table></div>
         </section>
-        <div className="dashboard-grid main qualification-grid">
-          <section className="panel"><SectionTitle icon="globe" title={sportFilter === 'all' ? 'Largest delegations' : `${sportById(sportFilter)?.name} qualification by country`} /><div className="delegation-ranking">{visibleDelegations.slice(0, 30).map((row, index) => { const country = countryByCode(row.countryCode); const investment = state.investments.find((item) => item.countryCode === row.countryCode); const max = visibleDelegations[0]?.athletes || 1; return <button key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}><span className="table-rank">{index + 1}</span><span className="qualification-country"><b>{country?.flag} {country?.name}</b><small>{sportFilter === 'all' ? `${row.sports} sports` : sportById(sportFilter)?.name} · avg rating {row.averageRating.toFixed(1)} · facilities {investment?.facilities || 0}</small></span><span className="delegation-total"><b>{row.athletes}</b><small>athletes</small></span><span className="qualification-bar"><i style={{ width: `${Math.min(100, row.athletes / max * 100)}%` }} /></span></button> })}</div></section>
-          <section className="panel"><SectionTitle icon="medal" title="Qualification by sport" /><div className="sport-qualification-list">{sportRows.map((row) => <button key={row.sport.id} onClick={() => setSportFilter(row.sport.id)}><span className="sport-icon"><Icon name={row.sport.icon || 'medal'} /></span><span><b>{row.sport.name}</b><small>{row.nations} nations</small></span><span><b>{row.athletes}</b><small>athletes</small></span><span><b>{row.elite}</b><small>elite</small></span></button>)}</div></section>
-        </div>
-        <section className="panel"><SectionTitle icon="star" title="Stars who qualified" /><div className="qualified-stars">{stars.map((athlete) => { const country = countryByCode(athlete.countryCode); const sport = sportById(athlete.sportId); return <button key={athlete.id} onClick={() => setSelectedAthlete(athlete.id)}><span className={`athlete-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{athlete.name}</b><small>{country?.flag} {country?.name} · {sport?.name}</small></span><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span><strong>{athlete.currentRating}</strong></button> })}</div></section>
-      </>}
+      )}
 
-      {mode === 'circuit' && <section className="qualification-circuit-grid">{competitions.map((competition) => { const sport = sportById(competition.sportId); const host = countryByCode(competition.hostCountryCode); const top = competition.topAthleteIds.map((id) => state.athletes.find((athlete) => athlete.id === id)).filter(Boolean); return <article className="panel qualification-event-card" key={competition.id}><div className="qualification-event-head"><span className="sport-icon"><Icon name={sport?.icon || 'medal'} /></span><span><b>{competition.name}</b><small>{host?.flag} {competition.hostCity} · {competition.year}</small></span>{competition.recordBreaks.length > 0 && <span className="wr-chip">WR × {competition.recordBreaks.length}</span>}</div><p>{competition.route}</p><div className="qualification-disciplines"><small>Disciplines covered</small><div>{(competition.eventNames || []).slice(0, 5).map((name) => <span key={name}>{name}</span>)}{(competition.eventNames || []).length > 5 && <span>+{competition.eventNames.length - 5} more</span>}</div></div><div className="qualification-event-stats"><span><b>{competition.participants}</b><small>participants</small></span><span><b>{competition.qualified}</b><small>places awarded</small></span><span><b>{(competition.countryPlaces || []).length}</b><small>countries qualified</small></span></div><div className="qualification-stars-mini">{top.map((athlete) => <button key={athlete.id} onClick={() => setSelectedAthlete(athlete.id)}><span className={`athlete-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{athlete.name}</b><small>{countryByCode(athlete.countryCode)?.flag} Rating {athlete.currentRating}</small></span></button>)}</div><button className="qualification-expand-button" onClick={() => setExpandedCompetition(expandedCompetition === competition.id ? null : competition.id)}>{expandedCompetition === competition.id ? 'Hide qualification detail' : `Show ${competition.qualified} qualifiers and country places`}</button>{expandedCompetition === competition.id && <div className="qualification-detail-drawer"><div className="qualification-country-places">{(competition.countryPlaces || []).slice(0, 20).map((row) => { const country = countryByCode(row.countryCode); return <span key={row.countryCode}><b>{country?.flag} {country?.name}</b><small>{row.places} place{row.places === 1 ? '' : 's'}</small></span> })}</div><div className="qualification-athlete-list">{(competition.qualifiedAthleteIds || []).slice(0, 30).map((id) => { const athlete = state.athletes.find((row) => row.id === id); if (!athlete) return null; return <button key={id} onClick={() => setSelectedAthlete(id)}><span>{countryByCode(athlete.countryCode)?.flag}</span><span><b>{athlete.name}</b><small>{athlete.currentRating} rating · {rarityLabels[athlete.rarity]}</small></span></button> })}{(competition.qualifiedAthleteIds || []).length > 30 && <p>Plus {competition.qualifiedAthleteIds.length - 30} additional qualified athletes retained in the database.</p>}</div></div>}{competition.recordBreaks.length > 0 && <div className="qualification-record-list">{competition.recordBreaks.map((record) => { const event = state.events.find((item) => item.recordKey === record.eventKey); return <div key={record.id}><span className="record-type wr">WR</span><span><b>{record.eventName}</b><small>{record.athleteName}</small></span><strong>{event ? formatPerformance(record.value, event) : record.value.toFixed(2)}</strong></div> })}</div>}</article> })}</section>}
+      {mode === 'delegations' && (
+        <section className="panel"><SectionTitle icon="globe" title={sportFilter === 'all' ? 'Qualified athletes by country' : `${selectedSport?.name} qualification by country`} /><div className="delegation-ranking">{visibleDelegations.slice(0, 40).map((row, index) => { const country = countryByCode(row.countryCode); const investment = state.investments.find((item) => item.countryCode === row.countryCode); const max = visibleDelegations[0]?.athletes || 1; return <button key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}><span className="table-rank">{index + 1}</span><span className="qualification-country"><b><CountryFlag country={country} /> {country.name}</b><small>{sportFilter === 'all' ? `${row.sports} sports` : selectedSport?.name} · avg rating {row.averageRating.toFixed(1)} · facilities {investment?.facilities || 0}</small></span><span className="delegation-total"><b>{row.athletes}</b><small>athletes</small></span><span className="qualification-bar"><i style={{ width: `${Math.min(100, row.athletes / max * 100)}%` }} /></span></button> })}</div></section>
+      )}
 
-      {mode === 'records' && <section className="panel table-panel"><div className="responsive-table"><table><thead><tr><th>Competition</th><th>Event</th><th>Record holder</th><th>Country</th><th>Mark</th><th>Year</th><th>Status</th></tr></thead><tbody>{qualificationRecords.map((record) => <tr key={record.id}><td><b>{record.competition || 'Olympic qualifier'}</b><small className="table-subline">{record.host}</small></td><td>{record.event?.name}<small className="table-subline">{sportById(record.sportId)?.name}</small></td><td><button className="text-button" onClick={() => setSelectedAthlete(record.athleteId)}>{record.athlete?.name}</button></td><td>{countryByCode(record.countryCode)?.flag} {countryByCode(record.countryCode)?.name}</td><td><strong className="performance-value">{formatPerformance(record.value, record.event)}</strong></td><td>{record.year}</td><td><span className={`status-badge ${record.standing ? 'standing' : 'broken'}`}>{record.standing ? 'Standing' : 'Broken'}</span></td></tr>)}</tbody></table></div>{!qualificationRecords.length && <EmptyState icon="record" text="No world records were set during this qualification cycle." />}</section>}
+      {mode === 'circuit' && (
+        <section className="qualification-circuit-grid">{competitions.map((competition) => {
+          const sport = sportById(competition.sportId)
+          const host = countryByCode(competition.hostCountryCode)
+          const rows = competition.resultRows || []
+          return <article className="panel qualification-event-card" key={competition.id}><div className="qualification-event-head"><span className="sport-icon"><Icon name={sport?.icon || 'medal'} /></span><span><b>{competition.name}</b><small><CountryFlag country={host} /> {competition.hostCity} · {competition.year}</small></span>{competition.recordBreaks.length > 0 && <span className="wr-chip">WR × {competition.recordBreaks.length}</span>}</div><p>{competition.route}</p><div className="qualification-event-stats"><span><b>{competition.participants}</b><small>participants</small></span><span><b>{competition.qualified}</b><small>qualified</small></span><span><b>{competition.countryPlaces?.length || 0}</b><small>countries</small></span></div><button className="qualification-expand-button" onClick={() => setExpandedCompetition(expandedCompetition === competition.id ? null : competition.id)}>{expandedCompetition === competition.id ? 'Hide complete result' : 'Open ranking / bracket result'}</button>{expandedCompetition === competition.id && <div className="qualification-detail-drawer"><div className="responsive-table"><table className="qualification-result-table"><thead><tr><th className="number">Pos.</th><th>Athlete</th><th>Country</th><th>Discipline</th><th>Mark</th><th>Status</th></tr></thead><tbody>{rows.map((row) => { const athlete = candidateLookup.get(row.athleteId); const country = countryByCode(row.countryCode); const event = state.events.find((item) => item.id === row.eventId) || state.events.find((item) => item.recordKey === row.eventKey); return athlete ? <tr key={row.athleteId} onClick={() => setSelectedAthlete(row.athleteId)}><td className="number">{row.competitionRank}</td><td><b>{athlete.name}</b><small className="table-subline">Rating {athlete.currentRating}</small></td><td><span className="country-inline"><CountryFlag country={country} />{country.name}</span></td><td>{row.eventName}</td><td>{event && row.value != null ? <b>{formatPerformance(row.value, event)}</b> : '—'}</td><td>{row.qualified ? <span className="status-badge standing">Q</span> : <span className="status-badge broken">Out</span>}</td></tr> : null })}</tbody></table></div></div>}</article>
+        })}</section>
+      )}
+
+      {mode === 'records' && <section className="panel table-panel"><div className="responsive-table"><table><thead><tr><th>Competition</th><th>Event</th><th>Record holder</th><th>Country</th><th>Mark</th><th>Year</th><th>Status</th></tr></thead><tbody>{qualificationRecords.map((record) => { const country = countryByCode(record.countryCode); return <tr key={record.id}><td><b>{record.competition || 'Olympic qualifier'}</b><small className="table-subline">{record.host}</small></td><td>{record.event?.name}<small className="table-subline">{sportById(record.sportId)?.name}</small></td><td><button className="text-button" onClick={() => setSelectedAthlete(record.athleteId)}>{record.athlete?.name}</button></td><td><span className="country-inline"><CountryFlag country={country} />{country.name}</span></td><td><strong className="performance-value">{formatPerformance(record.value, record.event)}</strong></td><td>{record.year}</td><td><span className={`status-badge ${record.standing ? 'standing' : 'broken'}`}>{record.standing ? 'Standing' : 'Broken'}</span></td></tr> })}</tbody></table></div>{!qualificationRecords.length && <EmptyState icon="record" text="No world records were set during this qualification cycle." />}</section>}
     </div>
   )
 }
@@ -504,105 +595,22 @@ function GamesView({ state, setSelectedEvent, setSelectedAthlete, runDay }) {
   const [day, setDay] = useState(Math.min(state.currentDay, state.edition.days))
   const [sportFilter, setSportFilter] = useState('all')
   const [stageFilter, setStageFilter] = useState('all')
-
   useEffect(() => setDay(Math.min(state.currentDay, state.edition.days)), [state.currentDay, state.edition.days])
-
-  const availableSports = useMemo(() => {
-    const ids = [...new Set(state.schedule.map((session) => session.sportId))]
-    return ids.map(sportById).filter(Boolean)
-  }, [state.schedule])
-
-  const sessions = state.schedule.filter((session) => (
-    session.day === day &&
-    (sportFilter === 'all' || session.sportId === sportFilter) &&
-    (stageFilter === 'all' || (stageFilter === 'medals' ? session.isFinal : !session.isFinal))
-  ))
-
-  const medalEvents = state.results.filter((result) => result.day === day)
-
+  const availableSports = useMemo(() => [...new Set(state.schedule.map((session) => session.sportId))].map(sportById).filter(Boolean), [state.schedule])
+  const sessions = state.schedule.filter((session) => session.day === day && (sportFilter === 'all' || session.sportId === sportFilter) && (stageFilter === 'all' || (stageFilter === 'medals' ? session.isFinal : !session.isFinal)))
+  const dayRounds = (state.roundResults || []).filter((result) => result.day === day && (sportFilter === 'all' || result.sportId === sportFilter) && (stageFilter === 'all' || (stageFilter === 'medals' ? result.isFinal : !result.isFinal)))
+  const medalEvents = state.results.filter((result) => result.day === day && (sportFilter === 'all' || result.sportId === sportFilter))
+  const recordAlerts = dayRounds.flatMap((round) => (round.newRecords || []).map((record) => ({ ...record, round })))
   return (
     <div className="page-stack">
-      <section className="page-heading">
-        <div><span className="eyebrow">The Olympic programme</span><h2>Competition calendar</h2><p>Qualifying rounds, heats, brackets and medal finals are processed through the complete schedule—even when the whole Games are simulated at once.</p></div>
-        <div className="heading-badge"><Icon name="calendar" /><span><b>{state.edition.days}</b><small>competition days</small></span></div>
-      </section>
-
-      <div className="day-tabs" role="tablist" aria-label="Olympic days">
-        {Array.from({ length: state.edition.days }, (_, index) => index + 1).map((item) => {
-          const completed = item < state.currentDay || state.phase === 'complete'
-          const medalCount = state.schedule.filter((session) => session.day === item && session.isFinal).length
-          return (
-            <button key={item} className={`${day === item ? 'active' : ''} ${completed ? 'completed' : ''}`} onClick={() => setDay(item)}>
-              <span>DAY</span><b>{item}</b><small>{medalCount} finals</small>
-            </button>
-          )
-        })}
-      </div>
-
-      <section className="panel day-simulation-bar">
-        <div><span className="sport-icon"><Icon name="play" /></span><span><b>{state.phase === 'games' ? `Ready to simulate Day ${state.currentDay}` : state.phase === 'complete' ? 'All Olympic days are complete' : 'The Games have not begun'}</b><small>Each click processes every morning, afternoon and evening round scheduled for that day, then advances exactly one day.</small></span></div>
-        {state.phase === 'games' && <button className="primary-action" onClick={runDay}><Icon name="play" size={17} /> Simulate Day {state.currentDay}</button>}
-      </section>
-
-      <section className="panel filters-panel">
-        <label><span>Sport</span><select value={sportFilter} onChange={(event) => setSportFilter(event.target.value)}><option value="all">All sports</option>{availableSports.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label>
-        <label><span>Session type</span><select value={stageFilter} onChange={(event) => setStageFilter(event.target.value)}><option value="all">All rounds</option><option value="qualifying">Qualifying rounds</option><option value="medals">Medal events</option></select></label>
-        <div className="filter-summary"><Icon name="filter" size={17} /><span>{sessions.length} scheduled sessions</span></div>
-      </section>
-
-      <div className="session-columns">
-        {['Morning', 'Afternoon', 'Evening'].map((sessionName) => (
-          <section className="session-column" key={sessionName}>
-            <div className="session-heading"><span>{sessionName}</span><small>{sessions.filter((session) => session.session === sessionName).length} events</small></div>
-            <div className="session-list">
-              {sessions.filter((session) => session.session === sessionName).map((session) => {
-                const event = state.events.find((item) => item.id === session.eventId)
-                const sport = sportById(session.sportId)
-                const result = state.results.find((item) => item.eventId === session.eventId)
-                const winner = result ? state.athletes.find((athlete) => athlete.id === result.podium[0]?.athleteId) : null
-                const winnerCountry = winner ? countryByCode(winner.countryCode) : null
-                return (
-                  <button className={`session-card ${session.status}`} key={session.id} onClick={() => setSelectedEvent(session.eventId)}>
-                    <div className="session-card-top"><span className="sport-icon"><Icon name={sport?.icon || 'medal'} size={19} /></span><small>{sport?.name}</small>{session.isFinal && <b>MEDAL</b>}</div>
-                    <h3>{event?.name}</h3>
-                    <div className="round-label">{session.stage}</div>
-                    {winner && session.isFinal ? (
-                      <div className="winner-line" onClick={(e) => { e.stopPropagation(); setSelectedAthlete(winner.id) }}>
-                        <span>🥇</span><span><b>{winner.name}</b><small>{winnerCountry?.flag} {winnerCountry?.name}</small></span>
-                      </div>
-                    ) : (
-                      <div className={`session-status ${session.status}`}><span />{session.status === 'completed' ? 'Completed' : day === state.currentDay ? 'Today' : 'Scheduled'}</div>
-                    )}
-                  </button>
-                )
-              })}
-              {!sessions.some((session) => session.session === sessionName) && <div className="empty-session">No matching sessions</div>}
-            </div>
-          </section>
-        ))}
-      </div>
-
-      {medalEvents.some((result) => result.newRecords?.length) && (
-        <section className="daily-record-alerts">
-          {medalEvents.flatMap((result) => (result.newRecords || []).map((record) => {
-            const event = state.events.find((item) => item.id === result.eventId)
-            const country = countryByCode(record.countryCode)
-            return <article className={record.type === 'WR' ? 'world-record-alert' : 'olympic-record-alert'} key={record.id}><span className="record-burst">{record.type}</span><div><b>{record.type === 'WR' ? 'WORLD RECORD' : 'OLYMPIC RECORD'} · {event?.name}</b><p>{record.athleteName} {country?.flag} records {event ? formatPerformance(record.value, event) : record.value} on Day {day}.</p></div></article>
-          }))}
-        </section>
-      )}
-
-      {medalEvents.length > 0 && (
-        <section className="panel">
-          <SectionTitle icon="medal" title={`Day ${day} medal results`} />
-          <div className="results-grid">
-            {medalEvents.map((result) => {
-              const event = state.events.find((item) => item.id === result.eventId)
-              return <ResultCard key={result.id} result={result} event={event} state={state} setSelectedAthlete={setSelectedAthlete} setSelectedEvent={setSelectedEvent} />
-            })}
-          </div>
-        </section>
-      )}
+      <section className="page-heading"><div><span className="eyebrow">The Olympic programme</span><h2>Competition calendar and complete results</h2><p>Every heat, qualification group, bracket round, semifinal and final now retains its full result. Open an event to follow exactly who led each round, who advanced and whether the early leader reproduced the performance in the final.</p></div><div className="heading-badge"><Icon name="calendar" /><span><b>{state.edition.days}</b><small>competition days</small></span></div></section>
+      <div className="day-tabs" role="tablist" aria-label="Olympic days">{Array.from({ length: state.edition.days }, (_, index) => index + 1).map((item) => { const completed = item < state.currentDay || state.phase === 'complete'; const roundCount = state.schedule.filter((session) => session.day === item).length; return <button key={item} className={`${day === item ? 'active' : ''} ${completed ? 'completed' : ''}`} onClick={() => setDay(item)}><span>DAY</span><b>{item}</b><small>{roundCount} rounds</small></button> })}</div>
+      <section className="panel day-simulation-bar"><div><span className="sport-icon"><Icon name="play" /></span><span><b>{state.phase === 'games' ? `Ready to simulate Day ${state.currentDay}` : state.phase === 'complete' ? 'All Olympic days are complete' : 'The Games have not begun'}</b><small>The button completes every scheduled round on exactly one day and then stops.</small></span></div>{state.phase === 'games' && <button className="primary-action" onClick={runDay}><Icon name="play" size={17} /> Simulate Day {state.currentDay}</button>}</section>
+      <section className="panel filters-panel"><label><span>Sport</span><select value={sportFilter} onChange={(event) => setSportFilter(event.target.value)}><option value="all">All sports</option>{availableSports.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label><label><span>Round type</span><select value={stageFilter} onChange={(event) => setStageFilter(event.target.value)}><option value="all">All rounds</option><option value="qualifying">Prior rounds</option><option value="medals">Finals</option></select></label><div className="filter-summary"><Icon name="filter" size={17} /><span>{sessions.length} scheduled · {dayRounds.length} completed</span></div></section>
+      <div className="session-columns">{['Morning', 'Afternoon', 'Evening'].map((sessionName) => <section className="session-column" key={sessionName}><div className="session-heading"><span>{sessionName}</span><small>{sessions.filter((session) => session.session === sessionName).length} rounds</small></div><div className="session-list">{sessions.filter((session) => session.session === sessionName).map((session) => { const event = state.events.find((item) => item.id === session.eventId); const sport = sportById(session.sportId); const round = (state.roundResults || []).find((item) => item.sessionId === session.id); const leader = round?.results?.[0]; const leaderAthlete = leader ? athleteById(state, leader.athleteId) : null; const leaderCountry = leader ? countryByCode(leader.countryCode) : null; return <button className={`session-card ${session.status}`} key={session.id} onClick={() => setSelectedEvent(session.eventId)}><div className="session-card-top"><span className="sport-icon"><Icon name={sport?.icon || 'medal'} size={19} /></span><small>{sport?.name}</small>{session.isFinal && <b>MEDAL</b>}</div><h3>{event?.name}</h3><div className="round-label">{session.stage}</div>{round ? <div className="round-leader-line"><span className="table-rank top-1">1</span><span><b>{leader?.displayName || leaderAthlete?.name}</b><small><CountryFlag country={leaderCountry} /> {event && leader ? formatPerformance(leader.value, event) : ''}{!session.isFinal ? ` · ${round.qualifiedIds.length} advanced` : ''}</small></span>{round.newRecords?.map((record) => <span key={record.id} className={`result-record-badge ${record.type.toLowerCase()}`}>{record.type}</span>)}</div> : <div className={`session-status ${session.status}`}><span />{day === state.currentDay ? 'Today' : 'Scheduled'}</div>}</button> })}{!sessions.some((session) => session.session === sessionName) && <div className="empty-session">No matching sessions</div>}</div></section>)}</div>
+      {recordAlerts.length > 0 && <section className="daily-record-alerts">{recordAlerts.map(({ round, ...record }) => { const event = state.events.find((item) => item.id === round.eventId); const country = countryByCode(record.countryCode); return <article className={record.type === 'WR' ? 'world-record-alert' : 'olympic-record-alert'} key={record.id}><span className="record-burst">{record.type}</span><div><b>{record.type === 'WR' ? 'WORLD RECORD' : 'OLYMPIC RECORD'} · {event?.name}</b><p>{record.athleteName} <CountryFlag country={country} /> records {event ? formatPerformance(record.value, event) : record.value} in the {round.stage} on Day {day}.</p></div></article> })}</section>}
+      {dayRounds.length > 0 && <section className="panel"><SectionTitle icon="chart" title={`Day ${day} — every completed round`} /><div className="round-results-grid">{dayRounds.map((round) => { const event = state.events.find((item) => item.id === round.eventId); const sport = sportById(round.sportId); return <article className="round-result-card" key={round.id}><button className="round-result-head" onClick={() => setSelectedEvent(round.eventId)}><span className="sport-icon"><Icon name={sport?.icon || 'medal'} /></span><span><b>{event?.name}</b><small>{round.stage} · {round.session}</small></span><span>{round.results.length} athletes</span></button><div className="round-result-list">{round.results.slice(0, 8).map((row, index) => { const athlete = athleteById(state, row.athleteId); const country = countryByCode(row.countryCode); return <button key={`${round.id}-${row.athleteId}`} onClick={() => setSelectedAthlete(row.athleteId)}><span className={`table-rank ${index < 3 ? `top-${index + 1}` : ''}`}>{index + 1}</span><span><b>{row.displayName || athlete?.name}</b><small><CountryFlag country={country} /> {country.name}</small></span><strong>{event ? formatPerformance(row.value, event) : row.value}</strong>{!round.isFinal && <span className={`advance-chip ${round.qualifiedIds.includes(row.athleteId) ? 'yes' : 'no'}`}>{round.qualifiedIds.includes(row.athleteId) ? 'Q' : 'OUT'}</span>}</button> })}</div>{round.results.length > 8 && <button className="show-all-round" onClick={() => setSelectedEvent(round.eventId)}>Open all {round.results.length} results</button>}</article> })}</div></section>}
+      {medalEvents.length > 0 && <section className="panel"><SectionTitle icon="medal" title={`Day ${day} medal results`} /><div className="results-grid">{medalEvents.map((result) => { const event = state.events.find((item) => item.id === result.eventId); return <ResultCard key={result.id} result={result} event={event} state={state} setSelectedAthlete={setSelectedAthlete} setSelectedEvent={setSelectedEvent} /> })}</div></section>}
     </div>
   )
 }
@@ -650,7 +658,7 @@ function MedalEvolutionChart({ editions, countryCodes }) {
           const points = row.values.map((point, index) => `${x(index)},${y(point.value)}`).join(' ')
           const country = countryByCode(row.countryCode)
           const last = row.values.at(-1)
-          return <g className={`trend-series series-${seriesIndex + 1}`} key={row.countryCode}><polyline points={points} fill="none" /><circle cx={x(row.values.length - 1)} cy={y(last.value)} r="4" /><text x={x(row.values.length - 1) - 4} y={Math.max(14, y(last.value) - 8)} textAnchor="end">{country?.flag} {country?.name}: {last.value}</text></g>
+          return <g className={`trend-series series-${seriesIndex + 1}`} key={row.countryCode}><polyline points={points} fill="none" /><circle cx={x(row.values.length - 1)} cy={y(last.value)} r="4" /><text x={x(row.values.length - 1) - 4} y={Math.max(14, y(last.value) - 8)} textAnchor="end">{country?.name}: {last.value}</text></g>
         })}
       </svg>
     </div>
@@ -670,9 +678,9 @@ function MedalView({ state, setSelectedCountry, setSelectedAthlete, setSelectedE
   const delegations = delegationStats(state)
   const currentMedals = state.results.map((result) => {
     const event = state.events.find((item) => item.id === result.eventId)
-    return { year: state.edition.year, host: state.edition.host, eventId: result.eventId, eventKey: result.eventKey, eventName: event?.name || 'Event', sportId: result.sportId, podium: result.podium, newRecords: result.newRecords || [] }
+    return { year: state.edition.year, host: state.edition.host, eventId: result.eventId, eventKey: result.eventKey, eventName: event?.name || 'Event', sportId: result.sportId, podium: result.podium, newRecords: recordsForEventRounds(state.roundResults, result.eventId) }
   })
-  const archiveMedals = state.history.flatMap((entry) => (entry.medalResults || []).map((result) => ({ ...result, year: entry.edition.year, host: entry.edition.host })))
+  const archiveMedals = state.history.flatMap((entry) => (entry.medalResults || []).map((result) => ({ ...result, year: entry.edition.year, host: entry.edition.host, newRecords: recordsForEventRounds(entry.roundResults, result.eventId) })))
   const medalArchive = [...archiveMedals, ...currentMedals]
   const currentRows = aggregateMedalEvents(currentMedals, sportFilter)
     .filter((row) => countryByCode(row.countryCode)?.name.toLowerCase().includes(search.toLowerCase()))
@@ -709,13 +717,13 @@ function MedalView({ state, setSelectedCountry, setSelectedAthlete, setSelectedE
       {mode !== 'archive' && <>
         <section className="panel filters-panel medal-ranking-filters"><label className="search-label"><span>Find country</span><div><Icon name="search" size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search delegation" /></div></label><label><span>Sport ranking</span><select value={sportFilter} onChange={(event) => setSportFilter(event.target.value)}><option value="all">All sports</option>{sportOptions.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label><label><span>Ranking</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="gold">Gold-first ranking</option><option value="total">Total medals</option></select></label></section>
         {mode === 'table' && recordHighlights.length > 0 && <section className="medal-record-strip">{recordHighlights.slice(0, 12).map((record) => <article className={record.type === 'WR' ? 'world-record-alert' : 'olympic-record-alert'} key={record.id}><span className="record-burst">{record.type}</span><div><b>{record.event?.name}</b><p>{record.athleteName} · {formatPerformance(record.value, record.event)}</p></div></article>)}</section>}
-        {mode === 'historical' && <section className="panel historical-evolution-panel"><SectionTitle icon="chart" title={`${sportFilter === 'all' ? 'All-sport' : sportById(sportFilter)?.name} cumulative medal evolution`} /><p className="section-intro">Select up to four countries. The default is the current all-time top four for the chosen sport.</p><div className="trend-country-picker">{historicalRows.slice(0, 16).map((row) => { const country = countryByCode(row.countryCode); return <button className={selectedTrend.includes(row.countryCode) ? 'active' : ''} key={row.countryCode} onClick={() => toggleTrend(row.countryCode)}>{country?.flag} {country?.name}<span>{row.total}</span></button> })}</div><MedalEvolutionChart editions={evolutionEditions.map((edition) => ({ ...edition, medalTable: sportFilter === 'all' ? edition.medalTable : aggregateMedalEvents(medalArchive.filter((result) => result.year === edition.year), sportFilter) }))} countryCodes={selectedTrend} /></section>}
-        <section className="panel table-panel"><div className="responsive-table"><table><thead><tr><th>Rank</th><th>Country</th>{mode === 'table' && <th className="number">Athletes</th>}<th className="number gold">Gold</th><th className="number silver">Silver</th><th className="number bronze">Bronze</th><th className="number">Total</th>{mode === 'table' && <th className="number">Per 100 athletes</th>}</tr></thead><tbody>{tableRows.map((row, index) => { const country = countryByCode(row.countryCode); const delegation = delegations.find((item) => item.countryCode === row.countryCode); const efficiency = delegation ? row.total / delegation.athletes * 100 : 0; return <tr key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}><td><span className={`table-rank ${index < 3 ? `top-${index + 1}` : ''}`}>{index + 1}</span></td><td><span className="country-cell"><b>{country?.flag}</b><span><strong>{country?.name}</strong><small>{sportFilter === 'all' ? (mode === 'historical' ? 'All-time simulated history' : `${delegation?.sports || 0} sports`) : sportById(sportFilter)?.name}</small></span></span></td>{mode === 'table' && <td className="number">{delegation?.athletes || 0}</td>}<td className="number medal-number">{row.gold}</td><td className="number medal-number">{row.silver}</td><td className="number medal-number">{row.bronze}</td><td className="number total-number">{row.total}</td>{mode === 'table' && <td className="number">{efficiency.toFixed(1)}</td>}</tr> })}</tbody></table></div>{!tableRows.length && <EmptyState icon="podium" text={mode === 'historical' ? 'Complete an Olympic edition to create the historical ranking.' : 'No medals have been awarded in this sport yet.'} />}</section>
+        {mode === 'historical' && <section className="panel historical-evolution-panel"><SectionTitle icon="chart" title={`${sportFilter === 'all' ? 'All-sport' : sportById(sportFilter)?.name} cumulative medal evolution`} /><p className="section-intro">Select up to four countries. The default is the current all-time top four for the chosen sport.</p><div className="trend-country-picker">{historicalRows.slice(0, 16).map((row) => { const country = countryByCode(row.countryCode); return <button className={selectedTrend.includes(row.countryCode) ? 'active' : ''} key={row.countryCode} onClick={() => toggleTrend(row.countryCode)}><CountryFlag country={country} /> {country?.name}<span>{row.total}</span></button> })}</div><MedalEvolutionChart editions={evolutionEditions.map((edition) => ({ ...edition, medalTable: sportFilter === 'all' ? edition.medalTable : aggregateMedalEvents(medalArchive.filter((result) => result.year === edition.year), sportFilter) }))} countryCodes={selectedTrend} /></section>}
+        <section className="panel table-panel"><div className="responsive-table"><table><thead><tr><th>Rank</th><th>Country</th>{mode === 'table' && <th className="number">Athletes</th>}<th className="number gold">Gold</th><th className="number silver">Silver</th><th className="number bronze">Bronze</th><th className="number">Total</th>{mode === 'table' && <th className="number">Per 100 athletes</th>}</tr></thead><tbody>{tableRows.map((row, index) => { const country = countryByCode(row.countryCode); const delegation = delegations.find((item) => item.countryCode === row.countryCode); const efficiency = delegation ? row.total / delegation.athletes * 100 : 0; return <tr key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}><td><span className={`table-rank ${index < 3 ? `top-${index + 1}` : ''}`}>{index + 1}</span></td><td><span className="country-cell"><CountryFlag country={country} /><span><strong>{country?.name}</strong><small>{sportFilter === 'all' ? (mode === 'historical' ? 'All-time simulated history' : `${delegation?.sports || 0} sports`) : sportById(sportFilter)?.name}</small></span></span></td>{mode === 'table' && <td className="number">{delegation?.athletes || 0}</td>}<td className="number medal-number">{row.gold}</td><td className="number medal-number">{row.silver}</td><td className="number medal-number">{row.bronze}</td><td className="number total-number">{row.total}</td>{mode === 'table' && <td className="number">{efficiency.toFixed(1)}</td>}</tr> })}</tbody></table></div>{!tableRows.length && <EmptyState icon="podium" text={mode === 'historical' ? 'Complete an Olympic edition to create the historical ranking.' : 'No medals have been awarded in this sport yet.'} />}</section>
       </>}
 
       {mode === 'archive' && <>
         <section className="panel records-filters medal-archive-filters"><label><span>Edition</span><select value={editionFilter} onChange={(event) => setEditionFilter(event.target.value)}><option value="all">All editions</option>{editionOptions.map((year) => <option key={year} value={year}>{year}</option>)}</select></label><label><span>Sport</span><select value={sportFilter} onChange={(event) => setSportFilter(event.target.value)}><option value="all">All sports</option>{sportOptions.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label><label><span>Country</span><select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="all">All countries</option>{countryOptions.map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}</select></label><label className="search-label"><span>Event</span><div><Icon name="search" size={17} /><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="Search event" /></div></label></section>
-        <section className="panel table-panel"><div className="responsive-table medal-archive-table"><table><thead><tr><th>Edition</th><th>Event</th><th>Gold</th><th>Silver</th><th>Bronze</th><th>Records</th></tr></thead><tbody>{archiveRows.slice(0, 500).map((result) => <tr key={`${result.year}-${result.eventId}`}><td><b>{result.year}</b><small className="table-subline">{result.host}</small></td><td><button className="text-button" onClick={() => { if (result.year === state.edition.year) setSelectedEvent(result.eventId) }}>{result.eventName}</button><small className="table-subline">{sportById(result.sportId)?.name}</small></td>{['gold','silver','bronze'].map((medal) => { const winner = result.podium.find((row) => row.medal === medal); const country = countryByCode(winner?.countryCode); return <td key={medal}>{winner ? <button className="archive-medalist" onClick={() => winner.athleteId && setSelectedAthlete(winner.athleteId)}><span>{medal === 'gold' ? '🥇' : medal === 'silver' ? '🥈' : '🥉'}</span><span><b>{winner.displayName || 'Olympic team'}</b><small>{country?.flag} {country?.name}</small></span></button> : '—'}</td> })}<td>{result.newRecords?.length ? result.newRecords.map((record) => <span key={record.id} className={`result-record-badge ${record.type.toLowerCase()}`}>{record.type}</span>) : '—'}</td></tr>)}</tbody></table></div>{archiveRows.length > 500 && <div className="table-note">Showing 500 medal events. Refine the filters to narrow the archive.</div>}{!archiveRows.length && <EmptyState icon="medal" text="No medal events match these filters." />}</section>
+        <section className="panel table-panel"><div className="responsive-table medal-archive-table"><table><thead><tr><th>Edition</th><th>Event</th><th>Gold</th><th>Silver</th><th>Bronze</th><th>Records</th></tr></thead><tbody>{archiveRows.slice(0, 500).map((result) => <tr key={`${result.year}-${result.eventId}`}><td><b>{result.year}</b><small className="table-subline">{result.host}</small></td><td><button className="text-button" onClick={() => { if (result.year === state.edition.year) setSelectedEvent(result.eventId) }}>{result.eventName}</button><small className="table-subline">{sportById(result.sportId)?.name}</small></td>{['gold','silver','bronze'].map((medal) => { const winner = result.podium.find((row) => row.medal === medal); const country = countryByCode(winner?.countryCode); return <td key={medal}>{winner ? <button className="archive-medalist" onClick={() => winner.athleteId && setSelectedAthlete(winner.athleteId)}><span>{medal === 'gold' ? '🥇' : medal === 'silver' ? '🥈' : '🥉'}</span><span><b>{winner.displayName || 'Olympic team'}</b><small><CountryFlag country={country} /> {country?.name}</small></span></button> : '—'}</td> })}<td>{result.newRecords?.length ? result.newRecords.map((record) => <span key={record.id} className={`result-record-badge ${record.type.toLowerCase()}`}>{record.type}</span>) : '—'}</td></tr>)}</tbody></table></div>{archiveRows.length > 500 && <div className="table-note">Showing 500 medal events. Refine the filters to narrow the archive.</div>}{!archiveRows.length && <EmptyState icon="medal" text="No medal events match these filters." />}</section>
       </>}
     </div>
   )
@@ -751,7 +759,7 @@ function CountriesView({ state, setSelectedCountry }) {
           const focusNames = investment?.focusSports.map((id) => sportById(id)?.name).filter(Boolean) || []
           return (
             <button className="country-card" key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}>
-              <div className="country-card-head"><span className="large-flag">{country?.flag}</span><span><b>{country?.name}</b><small>{row.athletes} qualified athletes</small></span><span className={`trend ${investment?.trend === 'rising' ? 'up' : investment?.trend === 'falling' ? 'down' : ''}`}><Icon name={investment?.trend === 'rising' ? 'arrowUp' : investment?.trend === 'falling' ? 'arrowDown' : 'minus'} size={15} /></span></div>
+              <div className="country-card-head"><CountryFlag country={country} className="large-flag" size="large" /><span><b>{country?.name}</b><small>{row.athletes} qualified athletes</small></span><span className={`trend ${investment?.trend === 'rising' ? 'up' : investment?.trend === 'falling' ? 'down' : ''}`}><Icon name={investment?.trend === 'rising' ? 'arrowUp' : investment?.trend === 'falling' ? 'arrowDown' : 'minus'} size={15} /></span></div>
               <div className="country-medals"><span><i>🥇</i><b>{medals.gold}</b></span><span><i>🥈</i><b>{medals.silver}</b></span><span><i>🥉</i><b>{medals.bronze}</b></span><span className="total"><small>Total</small><b>{medals.total}</b></span></div>
               <div className="investment-bars">
                 <Progress label="Investment" value={investment?.overall || 0} />
@@ -811,7 +819,7 @@ function AthletesView({ state, setSelectedAthlete }) {
                 return (
                   <tr key={athlete.id} onClick={() => setSelectedAthlete(athlete.id)}>
                     <td><span className="athlete-table-cell"><span className={`athlete-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((word) => word[0]).slice(0, 2).join('')}</span><strong>{athlete.name}</strong></span></td>
-                    <td>{country?.flag} {country?.name}</td><td><span className="sport-cell"><Icon name={sport?.icon || 'medal'} size={17} />{sport?.name}</span></td><td><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span></td><td className="number">{athlete.age}</td><td className="number"><b>{athlete.currentRating}</b><small className="table-subline">potential {athlete.baseSkill}</small></td><td className="number">{(athlete.status === 'retired' ? athlete.careerMedals : athlete.medals).gold}</td><td className="number">{(athlete.status === 'retired' ? athlete.careerMedals : athlete.medals).silver}</td><td className="number">{(athlete.status === 'retired' ? athlete.careerMedals : athlete.medals).bronze}</td>
+                    <td><span className="country-inline"><CountryFlag country={country} /> {country?.name}</span></td><td><span className="sport-cell"><Icon name={sport?.icon || 'medal'} size={17} />{sport?.name}</span></td><td><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span></td><td className="number">{athlete.age}</td><td className="number"><b>{athlete.currentRating}</b><small className="table-subline">potential {athlete.baseSkill}</small></td><td className="number">{(athlete.status === 'retired' ? athlete.careerMedals : athlete.medals).gold}</td><td className="number">{(athlete.status === 'retired' ? athlete.careerMedals : athlete.medals).silver}</td><td className="number">{(athlete.status === 'retired' ? athlete.careerMedals : athlete.medals).bronze}</td>
                   </tr>
                 )
               })}
@@ -879,7 +887,7 @@ function RecordsView({ state, setSelectedAthlete, setSelectedEvent }) {
                     <td><button className="text-button" onClick={() => { const currentEvent = state.events.find((item) => (item.recordKey || item.id) === (record.eventKey || record.eventId)); if (currentEvent) setSelectedEvent(currentEvent.id) }}>{record.event?.name}</button><small className="table-subline">{sportById(record.sportId)?.name}</small></td>
                     <td><strong className="performance-value">{record.event ? formatPerformance(record.value, record.event) : record.value.toFixed(2)}</strong></td>
                     <td><button className="text-button" onClick={() => setSelectedAthlete(record.athleteId)}>{record.athlete?.name || 'Historic athlete'}</button></td>
-                    <td>{country?.flag} {country?.name}</td><td><span className={`status-badge ${record.source === 'qualification' ? 'qualification-source' : 'olympic-source'}`}>{record.source === 'qualification' ? 'Qualification' : 'Olympic Games'}</span><small className="table-subline">{record.competition || `${record.host} ${record.year}`}</small></td><td>{record.host} {record.year}</td><td className="number"><b>{record.duration}</b> yrs</td><td><span className={`status-badge ${record.standing ? 'standing' : 'broken'}`}>{record.standing ? 'Standing' : 'Broken'}</span></td>
+                    <td><span className="country-inline"><CountryFlag country={country} /> {country?.name}</span></td><td><span className={`status-badge ${record.source === 'qualification' ? 'qualification-source' : 'olympic-source'}`}>{record.source === 'qualification' ? 'Qualification' : 'Olympic Games'}</span><small className="table-subline">{record.competition || `${record.host} ${record.year}`}</small></td><td>{record.host} {record.year}</td><td className="number"><b>{record.duration}</b> yrs</td><td><span className={`status-badge ${record.standing ? 'standing' : 'broken'}`}>{record.standing ? 'Standing' : 'Broken'}</span></td>
                   </tr>
                 )
               })}
@@ -966,9 +974,9 @@ function AlmanacView({ state }) {
   return (
     <div className="page-stack">
       <section className="page-heading"><div><span className="eyebrow">The complete procedural Olympic archive</span><h2>Historical almanac</h2><p>Athens 1896 is fixed; every later host belongs to this universe. Years, technology, participation and plausible sport introductions evolve historically, but cities, host legacies, programme choices, qualification stories and medal outcomes do not recreate real history.</p></div><div className="heading-badge"><Icon name="book" /><span><b>{history.length}</b><small>completed editions</small></span></div></section>
-      <section className="panel timeline-panel"><SectionTitle icon="calendar" title="Your Summer Olympic timeline" /><div className="edition-timeline">{years.map((year) => { const played = playedMap.get(year); const edition = played?.edition; const current = state.edition.year === year; return <div key={year} className={`timeline-edition ${played ? 'played' : 'future'} ${current ? 'current' : ''}`}><div className="timeline-dot"><span /></div><div className="timeline-card"><div className="timeline-year"><b>{year}</b>{current && <span>Current</span>}{played && !current && <span>Played</span>}</div>{edition ? <><div className="timeline-host">{edition.flag} {edition.host}, {edition.country}</div><div className="timeline-stats"><span><b>{edition.events}</b> events</span><span><b>{edition.sports}</b> sports</span><span><b>{edition.athletes.toLocaleString()}</b> athletes</span><span><b>{edition.womenPct}%</b> women</span></div>{played?.resultsCount > 0 && <div className="played-summary"><Icon name="trophy" size={15} /> {played.resultsCount} champions · {played.recordsSet || 0} Olympic records</div>}</> : <><div className="timeline-host">🌍 Host not yet selected</div><p>The host race opens after the previous Games. The same continent cannot win twice consecutively.</p></>}</div></div> })}</div></section>
-      {(state.hostSelectionHistory || []).length > 0 && <section className="panel"><SectionTitle icon="trophy" title="Host election archive" /><div className="host-election-history">{state.hostSelectionHistory.map((selection) => <article key={selection.year}><span className="large-flag">{countryByCode(selection.winner.countryCode)?.flag}</span><span><b>{selection.winner.city} {selection.year}</b><small>{countryByCode(selection.winner.countryCode)?.name} · defeated {selection.candidates.filter((candidate) => candidate.city !== selection.winner.city).map((candidate) => candidate.city).join(', ')}</small></span></article>)}</div></section>}
-      <section className="panel historical-qualification-panel"><SectionTitle icon="flag" title="Historical qualification archive" /><p className="section-intro">Qualification is stored with every completed Olympiad. Open the current cycle under Qualification; this archive shows how many named qualification competitions, places and pre-Games records shaped each past edition.</p><div className="responsive-table"><table><thead><tr><th>Games</th><th>Host</th><th className="number">Qualification events</th><th className="number">Places awarded</th><th className="number">Pre-Games WR/OR</th><th>Notable circuit</th></tr></thead><tbody>{history.slice().sort((a, b) => b.edition.year - a.edition.year).map((entry) => { const competitions = entry.qualificationCompetitions || []; const places = competitions.reduce((total, competition) => total + (competition.places || 0), 0); const records = state.records.filter((record) => record.year === entry.edition.year && record.source === 'qualification'); return <tr key={entry.edition.year}><td><b>{entry.edition.year}</b></td><td>{entry.edition.flag} {entry.edition.host}</td><td className="number">{competitions.length}</td><td className="number">{places.toLocaleString()}</td><td className="number">{records.length}</td><td>{competitions.length ? competitions.slice(0, 2).map((competition) => `${competition.name} (${competition.host})`).join(' · ') : 'No archived circuit'}</td></tr> })}</tbody></table></div></section>
+      <section className="panel timeline-panel"><SectionTitle icon="calendar" title="Your Summer Olympic timeline" /><div className="edition-timeline">{years.map((year) => { const played = playedMap.get(year); const edition = played?.edition; const current = state.edition.year === year; return <div key={year} className={`timeline-edition ${played ? 'played' : 'future'} ${current ? 'current' : ''}`}><div className="timeline-dot"><span /></div><div className="timeline-card"><div className="timeline-year"><b>{year}</b>{current && <span>Current</span>}{played && !current && <span>Played</span>}</div>{edition ? <><div className="timeline-host"><CountryFlag country={countryByCode(edition.countryCode)} /> {edition.host}, {edition.country}</div><div className="timeline-stats"><span><b>{edition.events}</b> events</span><span><b>{edition.sports}</b> sports</span><span><b>{edition.athletes.toLocaleString()}</b> athletes</span><span><b>{edition.womenPct}%</b> women</span></div>{played?.resultsCount > 0 && <div className="played-summary"><Icon name="trophy" size={15} /> {played.resultsCount} champions · {played.recordsSet || 0} Olympic records</div>}</> : <><div className="timeline-host">🌍 Host not yet selected</div><p>The host race opens after the previous Games. The same continent cannot win twice consecutively.</p></>}</div></div> })}</div></section>
+      {(state.hostSelectionHistory || []).length > 0 && <section className="panel"><SectionTitle icon="trophy" title="Host election archive" /><div className="host-election-history">{state.hostSelectionHistory.map((selection) => <article key={selection.year}><CountryFlag country={countryByCode(selection.winner.countryCode)} className="large-flag" size="large" /><span><b>{selection.winner.city} {selection.year}</b><small>{countryByCode(selection.winner.countryCode)?.name} · defeated {selection.candidates.filter((candidate) => candidate.city !== selection.winner.city).map((candidate) => candidate.city).join(', ')}</small></span></article>)}</div></section>}
+      <section className="panel historical-qualification-panel"><SectionTitle icon="flag" title="Historical qualification archive" /><p className="section-intro">Qualification is stored with every completed Olympiad. Open the current cycle under Qualification; this archive shows how many named qualification competitions, places and pre-Games records shaped each past edition.</p><div className="responsive-table"><table><thead><tr><th>Games</th><th>Host</th><th className="number">Qualification events</th><th className="number">Places awarded</th><th className="number">Pre-Games WR/OR</th><th>Notable circuit</th></tr></thead><tbody>{history.slice().sort((a, b) => b.edition.year - a.edition.year).map((entry) => { const competitions = entry.qualificationCompetitions || []; const places = competitions.reduce((total, competition) => total + (competition.places || 0), 0); const records = state.records.filter((record) => record.year === entry.edition.year && record.source === 'qualification'); return <tr key={entry.edition.year}><td><b>{entry.edition.year}</b></td><td><span className="country-inline"><CountryFlag country={countryByCode(entry.edition.countryCode)} /> {entry.edition.host}</span></td><td className="number">{competitions.length}</td><td className="number">{places.toLocaleString()}</td><td className="number">{records.length}</td><td>{competitions.length ? competitions.slice(0, 2).map((competition) => `${competition.name} (${competition.host})`).join(' · ') : 'No archived circuit'}</td></tr> })}</tbody></table></div></section>
       <section className="panel programme-evolution"><SectionTitle icon="chart" title="Programme evolution in this universe" /><div className="evolution-chart" aria-label="Olympic event count by simulated edition">{programmeEntries.map((edition) => <div className={`evolution-bar ${edition.year === state.edition.year ? 'current' : ''}`} key={edition.year} title={`${edition.host} ${edition.year}: ${edition.events} events`}><span style={{ height: `${Math.max(5, edition.events / 4)}px` }} /><small>{edition.year}</small></div>)}</div><div className="evolution-caption"><span><b>{programmeEntries[0]?.events || 43}</b> events at Athens 1896</span><span><b>{state.edition.events}</b> events in the current programme</span><span><b>{state.programmeChanges?.hostAdded?.length || 0}</b> current host-selected events</span></div></section>
     </div>
   )
@@ -996,7 +1004,7 @@ function MiniMedalTable({ rows, setSelectedCountry }) {
       <div className="mini-table-head"><span>#</span><span>Country</span><span>🥇</span><span>🥈</span><span>🥉</span><span>Total</span></div>
       {rows.map((row, index) => {
         const country = countryByCode(row.countryCode)
-        return <button key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}><span>{index + 1}</span><span>{country?.flag} <b>{country?.name}</b></span><span>{row.gold}</span><span>{row.silver}</span><span>{row.bronze}</span><span><b>{row.total}</b></span></button>
+        return <button key={row.countryCode} onClick={() => setSelectedCountry(row.countryCode)}><span>{index + 1}</span><span><CountryFlag country={country} /> <b>{country?.name}</b></span><span>{row.gold}</span><span>{row.silver}</span><span>{row.bronze}</span><span><b>{row.total}</b></span></button>
       })}
       {!rows.length && <EmptyState icon="podium" text="The medal table is waiting for its first champion." />}
     </div>
@@ -1005,14 +1013,15 @@ function MiniMedalTable({ rows, setSelectedCountry }) {
 
 function ResultCard({ result, event, state, setSelectedAthlete, setSelectedEvent }) {
   const sport = sportById(result.sportId)
+  const eventRecords = recordsForEventRounds(state.roundResults, event.id)
   return (
-    <article className={`result-card ${result.newRecords?.some((record) => record.type === 'WR') ? 'has-world-record' : ''}`}>
-      <button className="result-card-head" onClick={() => setSelectedEvent(event.id)}><span className="sport-icon"><Icon name={sport?.icon || 'medal'} size={19} /></span><span><b>{event.name}</b><small>{sport?.name}</small></span>{result.newRecords?.map((record) => <span key={record.id} className={`result-record-badge ${record.type.toLowerCase()}`}>{record.type}</span>)}<Icon name="chevron" size={16} /></button>
+    <article className={`result-card ${eventRecords.some((record) => record.type === 'WR') ? 'has-world-record' : ''}`}>
+      <button className="result-card-head" onClick={() => setSelectedEvent(event.id)}><span className="sport-icon"><Icon name={sport?.icon || 'medal'} size={19} /></span><span><b>{event.name}</b><small>{sport?.name}</small></span>{eventRecords.map((record) => <span key={record.id} className={`result-record-badge ${record.type.toLowerCase()}`}>{record.type}</span>)}<Icon name="chevron" size={16} /></button>
       <div className="podium-list">
         {result.podium.map((medalist) => {
           const athlete = state.athletes.find((item) => item.id === medalist.athleteId)
           const country = countryByCode(medalist.countryCode)
-          return <button key={medalist.athleteId} onClick={() => setSelectedAthlete(medalist.athleteId)}><span className={`podium-medal ${medalist.medal}`}>{medalist.place}</span><span><b>{medalist.displayName || athlete?.name}</b><small>{country?.flag} {country?.name}</small></span><strong>{formatPerformance(medalist.value, event)}</strong></button>
+          return <button key={medalist.athleteId} onClick={() => setSelectedAthlete(medalist.athleteId)}><span className={`podium-medal ${medalist.medal}`}>{medalist.place}</span><span><b>{medalist.displayName || athlete?.name}</b><small><CountryFlag country={country} /> {country?.name}</small></span><strong>{formatPerformance(medalist.value, event)}</strong></button>
         })}
       </div>
     </article>
@@ -1040,27 +1049,16 @@ function AthleteModal({ athlete, state, close }) {
   const maxRating = Math.max(100, ...ratingHistory.map((row) => row.rating))
   const careerMedals = athlete.careerMedals || athlete.medals
   const yearsRemaining = Math.max(0, athlete.retirementAge - athlete.age)
+  const qualificationHistory = [...(athlete.qualificationHistory || [])].sort((a, b) => b.editionYear - a.editionYear)
+  const olympicHistory = [...(athlete.competitionHistory || [])].sort((a, b) => b.editionYear - a.editionYear || a.day - b.day)
   return (
-    <ModalShell title={athlete.name} subtitle={`${country?.flag} ${country?.name} · ${sport?.name}`} close={close} icon="users">
-      <div className="profile-hero">
-        <div className={`profile-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</div>
-        <div className="profile-main"><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span><h3>{athlete.currentRating} current rating</h3><p>Age {athlete.age} · peak around {athlete.peakAge} · {athlete.status === 'retired' ? 'retired' : `${yearsRemaining} projected years remaining`}</p></div>
-        <div className="profile-medals"><span>🥇<b>{careerMedals.gold}</b></span><span>🥈<b>{careerMedals.silver}</b></span><span>🥉<b>{careerMedals.bronze}</b></span></div>
-      </div>
-      <div className="modal-stat-grid four-stats"><Metric icon="chart" label="Current rating" value={athlete.currentRating} detail={`${athlete.currentRating >= athlete.baseSkill ? 'At' : 'Below'} full potential`} /><Metric icon="star" label="Career potential" value={athlete.baseSkill} detail="Fixed talent ceiling" /><Metric icon="calendar" label="Appearances" value={athlete.appearances} detail={(athlete.appearanceYears || []).join(' · ') || 'Olympic debut'} /><Metric icon="record" label="Records" value={athleteRecords.length} detail="WR and OR entries" /></div>
-
-      {athlete.qualificationPath && <section className="modal-section athlete-qualification-path"><h3>Qualification pathway · {state.edition.year}</h3><div><span className="sport-icon"><Icon name="flag" /></span><span><b>{athlete.qualificationPath.name}</b><small>{countryByCode(athlete.qualificationPath.hostCountryCode)?.flag} {athlete.qualificationPath.hostCity}, {athlete.qualificationPath.year} · {athlete.qualificationPath.route}</small></span><span className="status-badge standing">Qualified</span></div></section>}
-
-      <section className="modal-section"><h3>Career development</h3>
-        <div className="career-curve" aria-label="Olympic rating history">
-          {ratingHistory.map((row) => <div key={`${row.year}-${row.age}`} className={row.year === state.edition.year ? 'current' : ''}><span className="curve-value">{row.rating}</span><i style={{ height: `${Math.max(8, row.rating / maxRating * 112)}px` }} /><b>{row.year}</b><small>Age {row.age}</small></div>)}
-          {!ratingHistory.length && <EmptyState icon="chart" text="No rating history has been recorded yet." />}
-        </div>
-        <div className="career-window"><span>Debut age <b>{athlete.careerStartAge}</b></span><span>Peak age <b>{athlete.peakAge}</b></span><span>Projected retirement <b>{athlete.retirementAge}</b></span><span>Career span <b>{athlete.retirementAge - athlete.careerStartAge} years</b></span></div>
-      </section>
-
-      <section className="modal-section"><h3>Olympic career</h3>{careerResults.length ? <div className="achievement-list">{careerResults.map((result, index) => <div key={`${result.year}-${result.eventKey}-${index}`}><span>{result.medal === 'gold' ? '🥇' : result.medal === 'silver' ? '🥈' : '🥉'}</span><span><b>{result.eventName}</b><small>{result.host} {result.year}{result.value != null ? ` · recorded performance` : ''}</small></span><strong className="career-edition">{result.year}</strong></div>)}</div> : <EmptyState icon="medal" text="No Olympic medals yet." />}</section>
-      <section className="modal-section"><h3>Specialties this edition</h3><div className="change-chip-list">{(athlete.events || []).map((eventId) => { const event = state.events.find((item) => item.id === eventId); return event ? <span key={eventId}><Icon name={sport?.icon || 'medal'} size={15} />{event.name}</span> : null })}</div></section>
+    <ModalShell title={athlete.name} subtitle={<span className="country-inline"><CountryFlag country={country} />{country?.name} · {sport?.name}</span>} close={close} icon="users">
+      <div className="profile-hero"><div className={`profile-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</div><div className="profile-main"><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span><h3>{athlete.currentRating} current rating</h3><p>Age {athlete.age} · peak around {athlete.peakAge} · {athlete.status === 'retired' ? 'retired' : `${yearsRemaining} projected years remaining`}</p></div><div className="profile-medals"><span>🥇<b>{careerMedals.gold}</b></span><span>🥈<b>{careerMedals.silver}</b></span><span>🥉<b>{careerMedals.bronze}</b></span></div></div>
+      <div className="modal-stat-grid four-stats"><Metric icon="chart" label="Current rating" value={athlete.currentRating} detail={`${athlete.currentRating >= athlete.baseSkill ? 'At' : 'Below'} full potential`} /><Metric icon="star" label="Career potential" value={athlete.baseSkill} detail="Fixed talent ceiling" /><Metric icon="calendar" label="Appearances" value={athlete.appearances} detail={(athlete.appearanceYears || []).join(' · ') || 'No Olympic appearance'} /><Metric icon="record" label="Records" value={athleteRecords.length} detail="WR and OR entries" /></div>
+      <section className="modal-section"><h3>Career development</h3><div className="career-curve" aria-label="Olympic rating history">{ratingHistory.map((row) => <div key={`${row.year}-${row.age}`} className={row.year === state.edition.year ? 'current' : ''}><span className="curve-value">{row.rating}</span><i style={{ height: `${Math.max(8, row.rating / maxRating * 112)}px` }} /><b>{row.year}</b><small>Age {row.age}</small></div>)}{!ratingHistory.length && <EmptyState icon="chart" text="No rating history has been recorded yet." />}</div><div className="career-window"><span>Debut age <b>{athlete.careerStartAge}</b></span><span>Peak age <b>{athlete.peakAge}</b></span><span>Projected retirement <b>{athlete.retirementAge}</b></span><span>Career span <b>{athlete.retirementAge - athlete.careerStartAge} years</b></span></div></section>
+      <section className="modal-section"><h3>Qualification history</h3>{qualificationHistory.length ? <div className="responsive-table athlete-path-table"><table><thead><tr><th>Olympiad</th><th>Competition</th><th>Discipline</th><th className="number">Competition rank</th><th className="number">World rank</th><th>Mark</th><th>Status</th></tr></thead><tbody>{qualificationHistory.map((row, index) => { const event = state.events.find((item) => item.id === row.eventId) || state.events.find((item) => item.recordKey === row.eventKey); return <tr key={`${row.editionYear}-${row.competitionId}-${index}`}><td><b>{row.editionYear}</b></td><td>{row.competition}<small className="table-subline">{row.hostCity} · {row.year}</small></td><td>{row.eventName}</td><td className="number">{row.rank}</td><td className="number">{row.globalRank}</td><td>{event && row.value != null ? <b>{formatPerformance(row.value, event)}</b> : '—'}</td><td>{row.qualified ? <span className="status-badge standing">Qualified</span> : <span className="status-badge broken">Missed Games</span>}</td></tr> })}</tbody></table></div> : <EmptyState icon="flag" text="No qualification history is stored for this athlete yet." />}</section>
+      <section className="modal-section"><h3>Olympic round-by-round progression</h3>{olympicHistory.length ? <div className="responsive-table athlete-path-table"><table><thead><tr><th>Games</th><th>Day</th><th>Event</th><th>Round</th><th className="number">Rank</th><th>Performance</th><th>Outcome</th></tr></thead><tbody>{olympicHistory.map((row, index) => { const event = state.events.find((item) => item.id === row.eventId) || state.events.find((item) => item.recordKey === row.eventKey); return <tr key={`${row.editionYear}-${row.eventKey}-${row.stage}-${index}`}><td><b>{row.editionYear}</b><small className="table-subline">{row.host}</small></td><td>Day {row.day}</td><td>{row.eventName}</td><td>{row.stage}</td><td className="number"><b>{row.rank}</b></td><td>{event && row.value != null ? formatPerformance(row.value, event) : row.value?.toFixed?.(2) || '—'}</td><td>{row.medal ? <span className={`medal-detail-badge ${row.medal}`}>{row.medal === 'gold' ? '🥇 Gold' : row.medal === 'silver' ? '🥈 Silver' : '🥉 Bronze'}</span> : row.advanced ? <span className="status-badge standing">Advanced</span> : <span className="status-badge broken">Eliminated</span>}</td></tr> })}</tbody></table></div> : <EmptyState icon="calendar" text="No Olympic round has been completed for this athlete yet." />}</section>
+      <section className="modal-section"><h3>Olympic medals</h3>{careerResults.length ? <div className="achievement-list">{careerResults.map((result, index) => <div key={`${result.year}-${result.eventKey}-${index}`}><span>{result.medal === 'gold' ? '🥇' : result.medal === 'silver' ? '🥈' : '🥉'}</span><span><b>{result.eventName}</b><small>{result.host} {result.year}</small></span><strong className="career-edition">{result.year}</strong></div>)}</div> : <EmptyState icon="medal" text="No Olympic medals yet." />}</section>
     </ModalShell>
   )
 }
@@ -1079,8 +1077,8 @@ function CountryModal({ country, state, close, setSelectedAthlete }) {
   }).filter(Boolean)
   if (qualifiedAthletes.length || currentMedals.total) historyRows.push({ year: state.edition.year, host: state.edition.host, athletes: qualifiedAthletes.length, sports: new Set(qualifiedAthletes.map((athlete) => athlete.sportId)).size, ...currentMedals })
   const allTime = historyRows.reduce((totals, row) => ({ gold: totals.gold + (row.gold || 0), silver: totals.silver + (row.silver || 0), bronze: totals.bronze + (row.bronze || 0), total: totals.total + (row.total || 0) }), { gold: 0, silver: 0, bronze: 0, total: 0 })
-  const historicalMedalEvents = state.history.flatMap((entry) => (entry.medalResults || []).map((result) => ({ ...result, year: entry.edition.year, host: entry.edition.host })))
-  const currentMedalEvents = state.results.map((result) => ({ ...result, year: state.edition.year, host: state.edition.host, eventName: state.events.find((event) => event.id === result.eventId)?.name || 'Event' }))
+  const historicalMedalEvents = state.history.flatMap((entry) => (entry.medalResults || []).map((result) => ({ ...result, year: entry.edition.year, host: entry.edition.host, newRecords: recordsForEventRounds(entry.roundResults, result.eventId) })))
+  const currentMedalEvents = state.results.map((result) => ({ ...result, year: state.edition.year, host: state.edition.host, eventName: state.events.find((event) => event.id === result.eventId)?.name || 'Event', newRecords: recordsForEventRounds(state.roundResults, result.eventId) }))
   const medalDetails = [...historicalMedalEvents, ...currentMedalEvents].flatMap((result) => result.podium.filter((medalist) => medalist.countryCode === country.code).map((medalist) => ({ year: result.year, host: result.host, sportId: result.sportId, eventName: result.eventName, medal: medalist.medal, athleteId: medalist.athleteId, displayName: medalist.displayName }))).sort((a, b) => b.year - a.year || a.sportId.localeCompare(b.sportId) || a.eventName.localeCompare(b.eventName))
   const sportBreakdown = [...new Set(medalDetails.map((row) => row.sportId))].map((sportId) => {
     const rows = medalDetails.filter((row) => row.sportId === sportId)
@@ -1088,8 +1086,8 @@ function CountryModal({ country, state, close, setSelectedAthlete }) {
   }).sort((a, b) => b.total - a.total)
   const openAthlete = (id) => { if (!id) return; close(); setSelectedAthlete(id) }
   return (
-    <ModalShell title={country.name} subtitle={`${country.flag} National Olympic programme`} close={close} icon="globe">
-      <div className="country-modal-hero"><span className="huge-flag">{country.flag}</span><div><h3>{qualifiedAthletes.length} qualified athletes in {state.edition.year}</h3><p>{country.firstYear ? `Olympic history since ${country.firstYear}` : 'Olympic delegation'} · {activeAthletes.length} active athletes in the wider national pathway · {medalists.length} known medalists</p></div><div className="profile-medals"><span>🥇<b>{allTime.gold}</b></span><span>🥈<b>{allTime.silver}</b></span><span>🥉<b>{allTime.bronze}</b></span></div></div>
+    <ModalShell title={country.name} subtitle={<span className="country-inline"><CountryFlag country={country} /> National Olympic programme</span>} close={close} icon="globe">
+      <div className="country-modal-hero"><CountryFlag country={country} className="huge-flag" size="large" /><div><h3>{qualifiedAthletes.length} qualified athletes in {state.edition.year}</h3><p>{country.firstYear ? `Olympic history since ${country.firstYear}` : 'Olympic delegation'} · {activeAthletes.length} active athletes in the wider national pathway · {medalists.length} known medalists</p></div><div className="profile-medals"><span>🥇<b>{allTime.gold}</b></span><span>🥈<b>{allTime.silver}</b></span><span>🥉<b>{allTime.bronze}</b></span></div></div>
       <div className="modal-stat-grid"><Metric icon="chart" label="Investment" value={investment?.overall || 0} detail={investment?.hostBoost ? `Host legacy +${investment.hostBoost}` : investment?.trend === 'rising' ? 'Programme rising' : investment?.trend === 'falling' ? 'Programme falling' : 'Stable programme'} /><Metric icon="country" label="Facilities" value={investment?.facilities || 0} detail="Training infrastructure" /><Metric icon="users" label="Youth pathway" value={investment?.youth || 0} detail="Future athlete production" /></div>
       <div className="modal-tabs country-modal-tabs"><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>Year breakdown</button><button className={tab === 'medals' ? 'active' : ''} onClick={() => setTab('medals')}>All medals</button><button className={tab === 'athletes' ? 'active' : ''} onClick={() => setTab('athletes')}>Active athletes</button><button className={tab === 'medalists' ? 'active' : ''} onClick={() => setTab('medalists')}>Medalists</button></div>
 
@@ -1111,16 +1109,15 @@ function CountryModal({ country, state, close, setSelectedAthlete }) {
 function EventModal({ event, state, close, setSelectedAthlete }) {
   const sport = sportById(event.sportId)
   const sessions = state.schedule.filter((session) => session.eventId === event.id)
+  const rounds = (state.roundResults || []).filter((round) => round.eventId === event.id)
   const result = state.results.find((item) => item.eventId === event.id)
   const records = getRecordRows(state).filter((record) => (record.eventKey || record.eventId) === (event.recordKey || event.id))
   return (
     <ModalShell title={event.name} subtitle={`${sport?.name} · ${state.edition.host} ${state.edition.year}`} close={close} icon={sport?.icon || 'medal'}>
-      <div className="event-format"><span className="sport-icon large"><Icon name={sport?.icon || 'medal'} size={28} /></span><div><h3>{sport?.category?.toUpperCase()} competition engine</h3><p>{sessions.length} scheduled round{sessions.length === 1 ? '' : 's'} from qualification to the medal decision.</p></div></div>
+      <div className="event-format"><span className="sport-icon large"><Icon name={sport?.icon || 'medal'} size={28} /></span><div><h3>{sport?.category?.toUpperCase()} competition engine</h3><p>{sessions.length} rounds are scheduled. Every completed result remains available below, including athletes eliminated before the final.</p></div></div>
       <div className="round-timeline">{sessions.map((session, index) => <div className={session.status} key={session.id}><span>{index + 1}</span><b>{session.stage}</b><small>Day {session.day} · {session.session}</small></div>)}</div>
-      {result ? (
-        <section className="modal-section"><h3>Final result</h3><div className="achievement-list podium-achievements">{result.podium.map((medalist) => { const athlete = state.athletes.find((item) => item.id === medalist.athleteId); const country = countryByCode(medalist.countryCode); return <button key={medalist.athleteId} onClick={() => { close(); setSelectedAthlete(medalist.athleteId) }}><span>{medalist.medal === 'gold' ? '🥇' : medalist.medal === 'silver' ? '🥈' : '🥉'}</span><span><b>{medalist.displayName || athlete?.name}</b><small>{country?.flag} {country?.name}</small></span><strong>{formatPerformance(medalist.value, event)}</strong></button> })}</div></section>
-      ) : <EmptyState icon="clock" text="This event has not reached its final yet." />}
-      <section className="modal-section"><h3>Record lineage</h3>{records.length ? <div className="record-lineage">{records.map((record) => <div key={record.id}><span className={`record-type ${record.type.toLowerCase()}`}>{record.type}</span><span><b>{formatPerformance(record.value, event)}</b><small>{record.athlete?.name} · {record.year} · {record.duration} years</small></span><span className={`status-badge ${record.standing ? 'standing' : 'broken'}`}>{record.standing ? 'Standing' : 'Broken'}</span></div>)}</div> : <EmptyState icon="record" text="The inaugural record will be established in the final." />}</section>
+      <section className="modal-section"><h3>Complete round results</h3>{rounds.length ? <div className="event-round-stack">{rounds.map((round) => <article key={round.id} className="event-round-table"><div className="event-round-title"><span><b>{round.stage}</b><small>Day {round.day} · {round.session} · {round.results.length} competitors</small></span>{round.newRecords?.map((record) => <span className={`result-record-badge ${record.type.toLowerCase()}`} key={record.id}>{record.type}</span>)}</div><div className="responsive-table"><table><thead><tr><th className="number">Rank</th><th>Athlete / team</th><th>Country</th><th>Performance</th><th>Outcome</th></tr></thead><tbody>{round.results.map((row, index) => { const athlete = athleteById(state, row.athleteId); const country = countryByCode(row.countryCode); const medal = result?.podium.find((medalist) => medalist.athleteId === row.athleteId)?.medal; return <tr key={`${round.id}-${row.athleteId}`} onClick={() => setSelectedAthlete(row.athleteId)}><td className="number"><span className={`table-rank ${index < 3 ? `top-${index + 1}` : ''}`}>{index + 1}</span></td><td><b>{row.displayName || athlete?.name}</b><small className="table-subline">Rating {row.rating?.toFixed?.(1) || athlete?.currentRating}</small></td><td><span className="country-inline"><CountryFlag country={country} />{country.name}</span></td><td><b>{formatPerformance(row.value, event)}</b></td><td>{round.isFinal && medal ? <span className={`medal-detail-badge ${medal}`}>{medal === 'gold' ? '🥇 Gold' : medal === 'silver' ? '🥈 Silver' : '🥉 Bronze'}</span> : !round.isFinal && round.qualifiedIds.includes(row.athleteId) ? <span className="status-badge standing">Advanced</span> : <span className="status-badge broken">Eliminated</span>}</td></tr> })}</tbody></table></div></article>)}</div> : <EmptyState icon="clock" text="No round has been simulated yet." />}</section>
+      <section className="modal-section"><h3>Record lineage</h3>{records.length ? <div className="record-lineage">{records.map((record) => <div key={record.id}><span className={`record-type ${record.type.toLowerCase()}`}>{record.type}</span><span><b>{formatPerformance(record.value, event)}</b><small>{record.athlete?.name} · {record.competition || record.year} · {record.duration} years</small></span><span className={`status-badge ${record.standing ? 'standing' : 'broken'}`}>{record.standing ? 'Standing' : 'Broken'}</span></div>)}</div> : <EmptyState icon="record" text="No record has been established yet." />}</section>
     </ModalShell>
   )
 }
