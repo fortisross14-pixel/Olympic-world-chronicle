@@ -657,3 +657,81 @@ th.gold { color: #a77a11; } th.silver { color: #7b8996; } th.bronze { color: #9b
   .round-result-list > button { grid-template-columns: 27px minmax(0,1fr) auto; }
   .round-result-list .advance-chip { grid-column: 2 / -1; justify-self: start; }
 }
+
+/* V5 — Olympic arc, rivalries, iconic moments and record mythology */
+.olympiad-arc-panel { overflow: hidden; }
+.olympiad-arc-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; padding:0 18px 18px; }
+.olympiad-stage { position:relative; min-height:190px; padding:14px; border:1px solid var(--line); border-radius:14px; background:linear-gradient(180deg,#fff,#f7fafb); }
+.olympiad-stage.current { border-color:color-mix(in srgb,var(--host-accent) 55%,var(--line)); box-shadow:0 0 0 2px color-mix(in srgb,var(--host-accent) 9%,transparent); }
+.olympiad-stage::after { content:""; position:absolute; top:26px; left:100%; width:12px; height:2px; background:var(--line); }
+.olympiad-stage:last-child::after { display:none; }
+.arc-stage-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.arc-stage-head span { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:var(--navy-900); color:white; font-size:10px; font-weight:900; }
+.olympiad-stage.current .arc-stage-head span { background:var(--host-accent); }
+.arc-stage-head small { font-size:10px; font-weight:900; color:var(--host-accent); }
+.olympiad-stage h3 { margin:0 0 9px; font-size:12px; color:var(--navy-900); }
+.olympiad-stage > b { display:block; font-size:10px; line-height:1.45; margin-bottom:7px; }
+.olympiad-stage > p { margin:0 0 10px; color:var(--muted); font-size:9px; line-height:1.5; }
+.arc-stage-description { display:block; color:#718092; font-size:8px; line-height:1.45; padding-top:9px; border-top:1px solid #edf1f4; }
+
+.mythology-dashboard { align-items:start; }
+.rivalry-list, .iconic-moment-list { padding:2px 14px 14px; display:grid; gap:8px; }
+.rivalry-list article, .iconic-moment-list article { border:1px solid var(--line); border-radius:12px; padding:11px; background:#fbfcfd; }
+.rivalry-event { display:flex; justify-content:space-between; gap:8px; color:var(--muted); font-size:8px; }
+.rivalry-event b { color:var(--navy-900); }
+.rivalry-matchup { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:10px; margin:11px 0 8px; }
+.rivalry-matchup button { border:0; background:transparent; padding:0; color:var(--navy-900); font-size:10px; font-weight:850; text-align:left; }
+.rivalry-matchup button:last-child { text-align:right; }
+.rivalry-matchup strong { font-size:18px; letter-spacing:.5px; color:var(--host-accent); }
+.rivalry-meta { display:flex; flex-wrap:wrap; gap:5px; }
+.rivalry-meta span { padding:4px 6px; border-radius:999px; background:#eef3f5; color:#617181; font-size:7px; font-weight:800; }
+.iconic-moment-list article { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 9px; }
+.moment-type { align-self:start; padding:4px 6px; border-radius:999px; background:color-mix(in srgb,var(--host-accent-2) 18%,white); color:#72520e; text-transform:uppercase; font-size:7px; font-weight:900; letter-spacing:.4px; }
+.iconic-moment-list button { border:0; background:transparent; padding:0; text-align:left; display:flex; flex-direction:column; }
+.iconic-moment-list button b { font-size:10px; color:var(--navy-900); }
+.iconic-moment-list button small { font-size:8px; color:var(--muted); margin-top:2px; }
+.iconic-moment-list p { grid-column:1 / -1; margin:2px 0 0; font-size:9px; color:var(--muted); line-height:1.5; }
+
+.record-mythology-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:0 18px 18px; }
+.record-mythology-grid > article { border:1px solid var(--line); border-radius:14px; padding:13px; background:linear-gradient(180deg,#fff,#f8fafb); }
+.mythology-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.mythology-label { font-size:7px; font-weight:900; text-transform:uppercase; letter-spacing:.55px; color:#806019; background:#fff5d8; padding:4px 6px; border-radius:999px; }
+.record-mythology-grid h3 { font-size:11px; margin:11px 0 5px; }
+.record-mythology-grid > article > strong { font-size:22px; color:var(--navy-900); }
+.record-mythology-grid > article > p { margin:5px 0 10px; color:var(--muted); font-size:8px; line-height:1.4; }
+.record-chasers { border-top:1px solid #edf1f4; padding-top:8px; display:grid; gap:4px; }
+.record-chasers > small { color:var(--muted); font-size:7px; font-weight:900; text-transform:uppercase; }
+.record-chasers button { border:0; background:#f0f5f7; padding:6px 7px; border-radius:8px; display:flex; justify-content:space-between; gap:8px; font-size:8px; }
+.record-chasers button span { color:var(--navy-900); font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.record-chasers button b { color:var(--host-accent); white-space:nowrap; }
+.no-chaser { display:block; border-top:1px solid #edf1f4; padding-top:8px; color:var(--muted); font-size:8px; }
+
+.almanac-rivalries, .almanac-moments { padding:2px 14px 14px; display:grid; gap:7px; }
+.almanac-rivalries article { display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #edf1f4; }
+.almanac-rivalries article > span:nth-child(2) { display:flex; flex-direction:column; min-width:0; }
+.almanac-rivalries b { font-size:9px; }
+.almanac-rivalries small { color:var(--muted); font-size:8px; margin-top:2px; }
+.almanac-rivalries strong { font-size:14px; color:var(--host-accent); }
+.almanac-moments article { display:grid; grid-template-columns:42px minmax(0,1fr); gap:9px; padding:8px 0; border-bottom:1px solid #edf1f4; }
+.almanac-moments article > span { font-size:10px; font-weight:900; color:var(--host-accent); }
+.almanac-moments b { display:block; font-size:9px; }
+.almanac-moments small { display:block; color:var(--muted); font-size:7px; margin-top:2px; }
+.almanac-moments p { margin:5px 0 0; color:#667687; font-size:8px; line-height:1.45; }
+
+.athlete-mythology-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.athlete-mythology-grid > div { border:1px solid var(--line); border-radius:12px; padding:10px; background:#f9fbfc; }
+.athlete-mythology-grid h4 { margin:0 0 7px; font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+.athlete-mythology-grid article { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 8px; align-items:center; padding:7px 0; border-bottom:1px solid #e9eef1; }
+.athlete-mythology-grid article:last-child { border-bottom:0; }
+.athlete-mythology-grid article b { font-size:9px; }
+.athlete-mythology-grid article small { grid-column:1; color:var(--muted); font-size:7px; }
+.athlete-mythology-grid article strong, .athlete-mythology-grid article span { grid-column:2; grid-row:1 / span 2; color:var(--host-accent); font-size:10px; font-weight:900; text-transform:capitalize; }
+
+@media (max-width: 980px) {
+  .olympiad-arc-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .record-mythology-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 640px) {
+  .olympiad-arc-grid, .record-mythology-grid, .athlete-mythology-grid { grid-template-columns:1fr; }
+  .olympiad-stage::after { display:none; }
+}

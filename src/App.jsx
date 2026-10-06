@@ -9,7 +9,9 @@ import {
   delegationStats,
   finalizeQualification,
   formatPerformance,
+  getOlympiadArc,
   getRecordRows,
+  getRivalryRows,
   simulateDay,
   simulateToEnd,
   sportById,
@@ -331,6 +333,9 @@ function Overview({ state, setPage, setSelectedAthlete, setSelectedCountry, setS
     .slice(0, 5)
   const today = state.schedule.filter((item) => item.day === Math.min(state.currentDay, state.edition.days))
   const finalsToday = today.filter((item) => item.isFinal)
+  const olympiadArc = getOlympiadArc(state)
+  const rivalries = getRivalryRows(state).filter((row) => row.meaningful).slice(0, 5)
+  const iconicMoments = (state.iconicMoments || []).filter((moment) => moment.year === state.edition.year).sort((a, b) => b.score - a.score).slice(0, 5)
 
   return (
     <div className="page-stack">
@@ -354,12 +359,35 @@ function Overview({ state, setPage, setSelectedAthlete, setSelectedCountry, setS
         </div>
       </section>
 
+      <section className="panel olympiad-arc-panel">
+        <SectionTitle icon="calendar" title="The four-year Olympic arc" />
+        <p className="section-intro">The Games are the payoff, not the whole story. Each Olympiad now keeps the buildup visible: reset, emergence, qualification pressure and the Olympic year.</p>
+        <div className="olympiad-arc-grid">
+          {olympiadArc.map((stage) => <article key={`${stage.index}-${stage.year}`} className={`olympiad-stage ${stage.status}`}><div className="arc-stage-head"><span>{stage.index}</span><small>{stage.year}</small></div><h3>{stage.label}</h3><b>{stage.headline}</b><p>{stage.detail}</p><small className="arc-stage-description">{stage.description}</small></article>)}
+        </div>
+      </section>
+
       <section className="metric-grid four">
         <Metric icon="users" label="Qualified athletes" value={state.athletes.length.toLocaleString()} detail={`${delegations.length} national delegations`} />
         <Metric icon="medal" label="Medal events" value={`${completed}/${state.events.length}`} detail={`${finalsToday.length} finals on the current day`} />
         <Metric icon="podium" label="Medals awarded" value={totalMedals.toLocaleString()} detail={`${state.medalTable.length} countries on the table`} />
         <Metric icon="record" label="Records established" value={recordRows.length.toLocaleString()} detail={`${recordRows.filter((record) => record.type === 'WR').length} world records`} />
       </section>
+
+      <div className="dashboard-grid lower mythology-dashboard">
+        <section className="panel rivalry-panel">
+          <SectionTitle icon="trophy" title="Rivalries defining the era" />
+          {rivalries.length ? <div className="rivalry-list">{rivalries.map((rivalry) => {
+            const a = rivalry.athleteA
+            const b = rivalry.athleteB
+            return <article key={rivalry.id}><div className="rivalry-event"><span>{sportById(rivalry.sportId)?.name}</span><b>{rivalry.eventName}</b></div><div className="rivalry-matchup"><button onClick={() => setSelectedAthlete(a.id)}>{a.name}</button><strong>{rivalry.aWins}–{rivalry.bWins}</strong><button onClick={() => setSelectedAthlete(b.id)}>{b.name}</button></div><div className="rivalry-meta"><span>{rivalry.meetings} Olympic final meeting{rivalry.meetings === 1 ? '' : 's'}</span><span>{rivalry.closeFinishes} close finish{rivalry.closeFinishes === 1 ? '' : 'es'}</span><span>Story score {rivalry.score}</span></div></article>
+          })}</div> : <EmptyState icon="trophy" text="The first great rivalry is still waiting to emerge. Elite and close Olympic finals will build one naturally." />}
+        </section>
+        <section className="panel iconic-panel">
+          <SectionTitle icon="sparkles" title="Iconic moments" action="History" onAction={() => setPage('almanac')} />
+          {iconicMoments.length ? <div className="iconic-moment-list">{iconicMoments.map((moment) => <article key={moment.id}><span className={`moment-type ${moment.type}`}>{moment.type.replaceAll('-', ' ')}</span><button onClick={() => moment.athleteIds?.[0] && setSelectedAthlete(moment.athleteIds[0])}><b>{moment.title}</b><small>{moment.eventName} · Day {moment.day}</small></button><p>{moment.body}</p></article>)}</div> : <EmptyState icon="sparkles" text="No moment has crossed the iconic threshold yet. Records, huge upsets, dynasties and historic firsts will be preserved here." />}
+        </section>
+      </div>
 
       <section className="panel world-events-panel">
         <SectionTitle icon="news" title="Events shaping the next Games" />
@@ -839,7 +867,8 @@ function RecordsView({ state, setSelectedAthlete, setSelectedEvent }) {
   const [typeFilter, setTypeFilter] = useState('all')
   const [sourceFilter, setSourceFilter] = useState('all')
   const [standingOnly, setStandingOnly] = useState(false)
-  const rows = getRecordRows(state)
+  const allRecordRows = getRecordRows(state)
+  const rows = allRecordRows
     .filter((record) => sportFilter === 'all' || record.sportId === sportFilter)
     .filter((record) => countryFilter === 'all' || record.countryCode === countryFilter)
     .filter((record) => eventFilter === 'all' || (record.eventKey || record.eventId) === eventFilter)
@@ -848,7 +877,8 @@ function RecordsView({ state, setSelectedAthlete, setSelectedEvent }) {
     .filter((record) => !standingOnly || record.standing)
     .sort((a, b) => b.year - a.year || a.event?.name.localeCompare(b.event?.name))
 
-  const longest = [...getRecordRows(state)].sort((a, b) => b.duration - a.duration)[0]
+  const longest = [...allRecordRows].sort((a, b) => b.duration - a.duration)[0]
+  const mythicStanding = allRecordRows.filter((record) => record.standing && record.type === 'WR').sort((a, b) => b.age - a.age || (b.chasers?.length || 0) - (a.chasers?.length || 0)).slice(0, 6)
   const availableSports = [...new Set(state.records.map((record) => record.sportId))].map(sportById).filter(Boolean)
   const availableCountries = [...new Set(state.records.map((record) => record.countryCode))].map(countryByCode).filter(Boolean)
 
@@ -860,14 +890,20 @@ function RecordsView({ state, setSelectedAthlete, setSelectedEvent }) {
       </section>
 
       <section className="metric-grid three">
-        <Metric icon="record" label="Standing records" value={getRecordRows(state).filter((record) => record.standing).length} detail="Current WR and OR marks" />
+        <Metric icon="record" label="Standing records" value={allRecordRows.filter((record) => record.standing).length} detail="Current WR and OR marks" />
         <Metric icon="clock" label="Longest reign" value={longest ? `${longest.duration} yrs` : '—'} detail={longest?.event?.name || 'No record history yet'} />
         <Metric icon="flag" label="Record nations" value={availableCountries.length} detail="Countries represented by record holders" />
       </section>
 
+      <section className="panel record-mythology-panel">
+        <SectionTitle icon="star" title="Record mythology & active chases" />
+        <p className="section-intro">A record now acquires status as it survives Olympiads. The oldest standing world marks become part of the sport's mythology, while the closest current challengers stay visible.</p>
+        {mythicStanding.length ? <div className="record-mythology-grid">{mythicStanding.map((record) => <article key={record.id}><div className="mythology-head"><span className={`record-type ${record.type.toLowerCase()}`}>{record.type}</span><span className="mythology-label">{record.mythology}</span></div><h3>{record.event?.name}</h3><strong>{formatPerformance(record.value, record.event)}</strong><p>{record.athlete?.name} · {countryByCode(record.countryCode)?.name} · standing {record.age} year{record.age === 1 ? '' : 's'}</p>{record.chasers?.length ? <div className="record-chasers"><small>Closest chasers</small>{record.chasers.map((chaser) => <button key={chaser.athleteId} onClick={() => setSelectedAthlete(chaser.athleteId)}><span>{chaser.athlete?.name || 'Challenger'}</span><b>{chaser.gapPct.toFixed(2)}% away</b></button>)}</div> : <small className="no-chaser">No current challenger is close enough to define a chase.</small>}</article>)}</div> : <EmptyState icon="record" text="The record book is still too young for mythology. Long-lived world records will appear here." />}
+      </section>
+
       <section className="panel records-filters">
         <label><span>Sport</span><select value={sportFilter} onChange={(event) => { setSportFilter(event.target.value); setEventFilter('all') }}><option value="all">All sports</option>{availableSports.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}</select></label>
-        <label><span>Event</span><select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="all">All events</option>{[...new Map(getRecordRows(state).filter((record) => sportFilter === 'all' || record.sportId === sportFilter).map((record) => [record.eventKey || record.eventId, record.event])).entries()].map(([key, event]) => <option key={key} value={key}>{event.name}</option>)}</select></label>
+        <label><span>Event</span><select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="all">All events</option>{[...new Map(allRecordRows.filter((record) => sportFilter === 'all' || record.sportId === sportFilter).map((record) => [record.eventKey || record.eventId, record.event])).entries()].map(([key, event]) => <option key={key} value={key}>{event.name}</option>)}</select></label>
         <label><span>Country</span><select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}><option value="all">All countries</option>{availableCountries.map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}</select></label>
         <label><span>Type</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">WR and OR</option><option value="WR">World records</option><option value="OR">Olympic records</option></select></label>
         <label><span>Where set</span><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Olympics + qualification</option><option value="olympics">Olympic Games only</option><option value="qualification">Qualification only</option></select></label>
@@ -963,6 +999,8 @@ function ProgrammeView({ state, setSelectedEvent }) {
 
 function AlmanacView({ state }) {
   const history = [...state.history]
+  const rivalries = getRivalryRows(state).filter((row) => row.meaningful).slice(0, 12)
+  const iconicMoments = [...(state.iconicMoments || [])].sort((a, b) => b.score - a.score || b.year - a.year).slice(0, 24)
   if (state.phase === 'complete' || state.phase === 'host-selection' || state.phase === 'host-selected') {
     history.push({ edition: state.edition, medalTable: state.medalTable, recordsSet: state.records.filter((record) => record.year === state.edition.year && record.source !== 'qualification').length, resultsCount: state.results.length, topAthletes: [...state.athletes].sort((a, b) => medalScore(b.medals) - medalScore(a.medals)).slice(0, 5) })
   }
@@ -977,6 +1015,10 @@ function AlmanacView({ state }) {
       <section className="panel timeline-panel"><SectionTitle icon="calendar" title="Your Summer Olympic timeline" /><div className="edition-timeline">{years.map((year) => { const played = playedMap.get(year); const edition = played?.edition; const current = state.edition.year === year; return <div key={year} className={`timeline-edition ${played ? 'played' : 'future'} ${current ? 'current' : ''}`}><div className="timeline-dot"><span /></div><div className="timeline-card"><div className="timeline-year"><b>{year}</b>{current && <span>Current</span>}{played && !current && <span>Played</span>}</div>{edition ? <><div className="timeline-host"><CountryFlag country={countryByCode(edition.countryCode)} /> {edition.host}, {edition.country}</div><div className="timeline-stats"><span><b>{edition.events}</b> events</span><span><b>{edition.sports}</b> sports</span><span><b>{edition.athletes.toLocaleString()}</b> athletes</span><span><b>{edition.womenPct}%</b> women</span></div>{played?.resultsCount > 0 && <div className="played-summary"><Icon name="trophy" size={15} /> {played.resultsCount} champions · {played.recordsSet || 0} Olympic records</div>}</> : <><div className="timeline-host">🌍 Host not yet selected</div><p>The host race opens after the previous Games. The same continent cannot win twice consecutively.</p></>}</div></div> })}</div></section>
       {(state.hostSelectionHistory || []).length > 0 && <section className="panel"><SectionTitle icon="trophy" title="Host election archive" /><div className="host-election-history">{state.hostSelectionHistory.map((selection) => <article key={selection.year}><CountryFlag country={countryByCode(selection.winner.countryCode)} className="large-flag" size="large" /><span><b>{selection.winner.city} {selection.year}</b><small>{countryByCode(selection.winner.countryCode)?.name} · defeated {selection.candidates.filter((candidate) => candidate.city !== selection.winner.city).map((candidate) => candidate.city).join(', ')}</small></span></article>)}</div></section>}
       <section className="panel historical-qualification-panel"><SectionTitle icon="flag" title="Historical qualification archive" /><p className="section-intro">Qualification is stored with every completed Olympiad. Open the current cycle under Qualification; this archive shows how many named qualification competitions, places and pre-Games records shaped each past edition.</p><div className="responsive-table"><table><thead><tr><th>Games</th><th>Host</th><th className="number">Qualification events</th><th className="number">Places awarded</th><th className="number">Pre-Games WR/OR</th><th>Notable circuit</th></tr></thead><tbody>{history.slice().sort((a, b) => b.edition.year - a.edition.year).map((entry) => { const competitions = entry.qualificationCompetitions || []; const places = competitions.reduce((total, competition) => total + (competition.places || 0), 0); const records = state.records.filter((record) => record.year === entry.edition.year && record.source === 'qualification'); return <tr key={entry.edition.year}><td><b>{entry.edition.year}</b></td><td><span className="country-inline"><CountryFlag country={countryByCode(entry.edition.countryCode)} /> {entry.edition.host}</span></td><td className="number">{competitions.length}</td><td className="number">{places.toLocaleString()}</td><td className="number">{records.length}</td><td>{competitions.length ? competitions.slice(0, 2).map((competition) => `${competition.name} (${competition.host})`).join(' · ') : 'No archived circuit'}</td></tr> })}</tbody></table></div></section>
+      <div className="dashboard-grid lower almanac-mythology-grid">
+        <section className="panel"><SectionTitle icon="trophy" title="Great rivalries" />{rivalries.length ? <div className="almanac-rivalries">{rivalries.map((rivalry, index) => <article key={rivalry.id}><span className="rank-number">{index + 1}</span><span><b>{rivalry.athleteA.name} vs {rivalry.athleteB.name}</b><small>{rivalry.eventName} · {rivalry.meetings} meetings · {rivalry.aWins}–{rivalry.bWins}</small></span><strong>{rivalry.score}</strong></article>)}</div> : <EmptyState icon="trophy" text="No rivalry has become historically meaningful yet." />}</section>
+        <section className="panel"><SectionTitle icon="sparkles" title="Olympic mythology" />{iconicMoments.length ? <div className="almanac-moments">{iconicMoments.map((moment) => <article key={moment.id}><span>{moment.year}</span><div><b>{moment.title}</b><small>{moment.host} · {moment.eventName}</small><p>{moment.body}</p></div></article>)}</div> : <EmptyState icon="sparkles" text="Iconic moments will accumulate here across generations." />}</section>
+      </div>
       <section className="panel programme-evolution"><SectionTitle icon="chart" title="Programme evolution in this universe" /><div className="evolution-chart" aria-label="Olympic event count by simulated edition">{programmeEntries.map((edition) => <div className={`evolution-bar ${edition.year === state.edition.year ? 'current' : ''}`} key={edition.year} title={`${edition.host} ${edition.year}: ${edition.events} events`}><span style={{ height: `${Math.max(5, edition.events / 4)}px` }} /><small>{edition.year}</small></div>)}</div><div className="evolution-caption"><span><b>{programmeEntries[0]?.events || 43}</b> events at Athens 1896</span><span><b>{state.edition.events}</b> events in the current programme</span><span><b>{state.programmeChanges?.hostAdded?.length || 0}</b> current host-selected events</span></div></section>
     </div>
   )
@@ -1051,10 +1093,13 @@ function AthleteModal({ athlete, state, close }) {
   const yearsRemaining = Math.max(0, athlete.retirementAge - athlete.age)
   const qualificationHistory = [...(athlete.qualificationHistory || [])].sort((a, b) => b.editionYear - a.editionYear)
   const olympicHistory = [...(athlete.competitionHistory || [])].sort((a, b) => b.editionYear - a.editionYear || a.day - b.day)
+  const rivalries = getRivalryRows(state).filter((row) => row.meaningful && (row.athleteAId === athlete.id || row.athleteBId === athlete.id)).slice(0, 5)
+  const iconicMoments = (state.iconicMoments || []).filter((moment) => moment.athleteIds?.includes(athlete.id)).sort((a, b) => b.score - a.score).slice(0, 8)
   return (
     <ModalShell title={athlete.name} subtitle={<span className="country-inline"><CountryFlag country={country} />{country?.name} · {sport?.name}</span>} close={close} icon="users">
       <div className="profile-hero"><div className={`profile-avatar rarity-${athlete.rarity}`}>{athlete.name.split(' ').map((part) => part[0]).slice(0, 2).join('')}</div><div className="profile-main"><span className={`rarity-badge ${athlete.rarity}`}>{rarityLabels[athlete.rarity]}</span><h3>{athlete.currentRating} current rating</h3><p>Age {athlete.age} · peak around {athlete.peakAge} · {athlete.status === 'retired' ? 'retired' : `${yearsRemaining} projected years remaining`}</p></div><div className="profile-medals"><span>🥇<b>{careerMedals.gold}</b></span><span>🥈<b>{careerMedals.silver}</b></span><span>🥉<b>{careerMedals.bronze}</b></span></div></div>
       <div className="modal-stat-grid four-stats"><Metric icon="chart" label="Current rating" value={athlete.currentRating} detail={`${athlete.currentRating >= athlete.baseSkill ? 'At' : 'Below'} full potential`} /><Metric icon="star" label="Career potential" value={athlete.baseSkill} detail="Fixed talent ceiling" /><Metric icon="calendar" label="Appearances" value={athlete.appearances} detail={(athlete.appearanceYears || []).join(' · ') || 'No Olympic appearance'} /><Metric icon="record" label="Records" value={athleteRecords.length} detail="WR and OR entries" /></div>
+      {(rivalries.length > 0 || iconicMoments.length > 0) && <section className="modal-section athlete-mythology"><h3>Rivalries & defining moments</h3><div className="athlete-mythology-grid">{rivalries.length > 0 && <div><h4>Rivals</h4>{rivalries.map((rivalry) => { const opponent = rivalry.athleteAId === athlete.id ? rivalry.athleteB : rivalry.athleteA; const ownWins = rivalry.athleteAId === athlete.id ? rivalry.aWins : rivalry.bWins; const oppWins = rivalry.athleteAId === athlete.id ? rivalry.bWins : rivalry.aWins; return <article key={rivalry.id}><b>{opponent.name}</b><small>{rivalry.eventName}</small><strong>{ownWins}–{oppWins}</strong></article> })}</div>}{iconicMoments.length > 0 && <div><h4>Olympic mythology</h4>{iconicMoments.map((moment) => <article key={moment.id}><b>{moment.title}</b><small>{moment.host} {moment.year} · {moment.eventName}</small><span>{moment.type.replaceAll('-', ' ')}</span></article>)}</div>}</div></section>}
       <section className="modal-section"><h3>Career development</h3><div className="career-curve" aria-label="Olympic rating history">{ratingHistory.map((row) => <div key={`${row.year}-${row.age}`} className={row.year === state.edition.year ? 'current' : ''}><span className="curve-value">{row.rating}</span><i style={{ height: `${Math.max(8, row.rating / maxRating * 112)}px` }} /><b>{row.year}</b><small>Age {row.age}</small></div>)}{!ratingHistory.length && <EmptyState icon="chart" text="No rating history has been recorded yet." />}</div><div className="career-window"><span>Debut age <b>{athlete.careerStartAge}</b></span><span>Peak age <b>{athlete.peakAge}</b></span><span>Projected retirement <b>{athlete.retirementAge}</b></span><span>Career span <b>{athlete.retirementAge - athlete.careerStartAge} years</b></span></div></section>
       <section className="modal-section"><h3>Qualification history</h3>{qualificationHistory.length ? <div className="responsive-table athlete-path-table"><table><thead><tr><th>Olympiad</th><th>Competition</th><th>Discipline</th><th className="number">Competition rank</th><th className="number">World rank</th><th>Mark</th><th>Status</th></tr></thead><tbody>{qualificationHistory.map((row, index) => { const event = state.events.find((item) => item.id === row.eventId) || state.events.find((item) => item.recordKey === row.eventKey); return <tr key={`${row.editionYear}-${row.competitionId}-${index}`}><td><b>{row.editionYear}</b></td><td>{row.competition}<small className="table-subline">{row.hostCity} · {row.year}</small></td><td>{row.eventName}</td><td className="number">{row.rank}</td><td className="number">{row.globalRank}</td><td>{event && row.value != null ? <b>{formatPerformance(row.value, event)}</b> : '—'}</td><td>{row.qualified ? <span className="status-badge standing">Qualified</span> : <span className="status-badge broken">Missed Games</span>}</td></tr> })}</tbody></table></div> : <EmptyState icon="flag" text="No qualification history is stored for this athlete yet." />}</section>
       <section className="modal-section"><h3>Olympic round-by-round progression</h3>{olympicHistory.length ? <div className="responsive-table athlete-path-table"><table><thead><tr><th>Games</th><th>Day</th><th>Event</th><th>Round</th><th className="number">Rank</th><th>Performance</th><th>Outcome</th></tr></thead><tbody>{olympicHistory.map((row, index) => { const event = state.events.find((item) => item.id === row.eventId) || state.events.find((item) => item.recordKey === row.eventKey); return <tr key={`${row.editionYear}-${row.eventKey}-${row.stage}-${index}`}><td><b>{row.editionYear}</b><small className="table-subline">{row.host}</small></td><td>Day {row.day}</td><td>{row.eventName}</td><td>{row.stage}</td><td className="number"><b>{row.rank}</b></td><td>{event && row.value != null ? formatPerformance(row.value, event) : row.value?.toFixed?.(2) || '—'}</td><td>{row.medal ? <span className={`medal-detail-badge ${row.medal}`}>{row.medal === 'gold' ? '🥇 Gold' : row.medal === 'silver' ? '🥈 Silver' : '🥉 Bronze'}</span> : row.advanced ? <span className="status-badge standing">Advanced</span> : <span className="status-badge broken">Eliminated</span>}</td></tr> })}</tbody></table></div> : <EmptyState icon="calendar" text="No Olympic round has been completed for this athlete yet." />}</section>

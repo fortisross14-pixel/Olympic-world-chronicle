@@ -1171,6 +1171,180 @@ export function simulateFinal({ edition, event, athletes, records, random }) {
   return { podium, results: simulation.ranked.slice(0, Math.min(64, simulation.ranked.length)), newRecords: simulation.newRecords }
 }
 
+
+function rivalryPairKey(aId, bId, eventKey) {
+  const [a, b] = [aId, bId].sort()
+  return `${eventKey || 'sport'}::${a}::${b}`
+}
+
+function resultMargin(event, first, second) {
+  if (!first || !second || first.value == null || second.value == null) return null
+  const scale = Math.max(1, Math.abs(first.value), Math.abs(event.benchmark || 0))
+  return Math.abs(first.value - second.value) / scale
+}
+
+function rivalryStrength(row) {
+  const elite = (row.eliteMeetings || 0) * 7
+  const stakes = (row.olympicFinals || 0) * 11 + (row.podiumClashes || 0) * 7
+  const drama = (row.closeFinishes || 0) * 9 + (row.recordClashes || 0) * 8
+  const history = Math.min(38, (row.meetings || 0) * 10)
+  return Math.round(history + elite + stakes + drama)
+}
+
+function updateRivalriesForFinal({ state, event, ranked, newRecords, athleteMap, day }) {
+  if (event.team) return state.rivalries || []
+  const prior = new Map((state.rivalries || []).map((row) => [row.id, { ...row, history: [...(row.history || [])] }]))
+  const contenders = ranked.slice(0, Math.min(3, ranked.length)).filter((row) => athleteMap.get(row.athleteId))
+  for (let i = 0; i < contenders.length; i += 1) {
+    for (let j = i + 1; j < contenders.length; j += 1) {
+      const first = contenders[i]
+      const second = contenders[j]
+      const athleteA = athleteMap.get(first.athleteId)
+      const athleteB = athleteMap.get(second.athleteId)
+      if (!athleteA || !athleteB) continue
+      const firstAthleteElite = ['generational', 'legend'].includes(athleteA.rarity) || (athleteA.currentRating || 0) >= 92
+      const secondAthleteElite = ['generational', 'legend'].includes(athleteB.rarity) || (athleteB.currentRating || 0) >= 92
+      const pairMargin = resultMargin(event, first, second)
+      const pairIsClose = pairMargin != null && pairMargin <= (event.metric === 'time' ? 0.006 : event.metric === 'distance' || event.metric === 'weight' ? 0.012 : 0.022)
+      if (!(i === 0 && j === 1) && !(firstAthleteElite && secondAthleteElite && pairIsClose)) continue
+      const id = rivalryPairKey(first.athleteId, second.athleteId, event.recordKey)
+      const existing = prior.get(id) || {
+        id,
+        eventKey: event.recordKey,
+        eventName: event.name,
+        sportId: event.sportId,
+        athleteAId: [first.athleteId, second.athleteId].sort()[0],
+        athleteBId: [first.athleteId, second.athleteId].sort()[1],
+        meetings: 0,
+        aWins: 0,
+        bWins: 0,
+        olympicFinals: 0,
+        podiumClashes: 0,
+        closeFinishes: 0,
+        recordClashes: 0,
+        eliteMeetings: 0,
+        history: [],
+      }
+      const winnerId = first.rank < second.rank ? first.athleteId : second.athleteId
+      const margin = pairMargin
+      const close = pairIsClose
+      const elite = Math.max(athleteA.currentRating || 0, athleteB.currentRating || 0) >= 90 || ['generational', 'legend'].includes(athleteA.rarity) || ['generational', 'legend'].includes(athleteB.rarity)
+      const recordClash = (newRecords || []).some((record) => record.athleteId === first.athleteId || record.athleteId === second.athleteId)
+      existing.meetings += 1
+      existing.olympicFinals += 1
+      if (first.rank <= 3 && second.rank <= 3) existing.podiumClashes += 1
+      if (close) existing.closeFinishes += 1
+      if (recordClash) existing.recordClashes += 1
+      if (elite) existing.eliteMeetings += 1
+      if (winnerId === existing.athleteAId) existing.aWins += 1
+      else existing.bWins += 1
+      existing.lastMeeting = { year: state.edition.year, host: state.edition.host, day, eventName: event.name, winnerId, firstId: first.athleteId, secondId: second.athleteId, firstRank: first.rank, secondRank: second.rank, margin }
+      existing.history.push(existing.lastMeeting)
+      existing.history = existing.history.slice(-12)
+      existing.score = rivalryStrength(existing)
+      prior.set(id, existing)
+    }
+  }
+  return [...prior.values()].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 600)
+}
+
+function priorCountrySportMedal(state, countryCode, sportId, medal = null) {
+  const historical = (state.history || []).some((entry) => (entry.medalResults || []).some((result) => result.sportId === sportId && result.podium?.some((row) => row.countryCode === countryCode && (!medal || row.medal === medal))))
+  if (historical) return true
+  return (state.results || []).some((result) => result.sportId === sportId && result.podium?.some((row) => row.countryCode === countryCode && (!medal || row.medal === medal)))
+}
+
+function consecutiveGoldRun(athlete, eventKey, year) {
+  const goldYears = new Set((athlete.careerResults || []).filter((row) => row.eventKey === eventKey && row.medal === 'gold').map((row) => row.year))
+  let run = 0
+  for (let current = year; goldYears.has(current); current -= 4) run += 1
+  return run
+}
+
+function iconicMomentsForFinal({ state, event, podium, ranked, newRecords, athleteMap, recordsBefore, day }) {
+  const winnerRow = podium[0]
+  const silverRow = podium[1]
+  const winner = athleteMap.get(winnerRow?.athleteId)
+  if (!winner || !winnerRow) return []
+  const country = countryByCode(winner.countryCode)
+  const candidates = []
+  const push = (type, score, title, body, extra = {}) => candidates.push({
+    id: `moment-${state.edition.year}-${event.id}-${type}`,
+    type, score, title, body,
+    year: state.edition.year, host: state.edition.host, day,
+    eventId: event.id, eventKey: event.recordKey, eventName: event.name, sportId: event.sportId,
+    athleteIds: [winner.id, ...(extra.athleteIds || [])].filter(Boolean),
+    countryCodes: [winner.countryCode, ...(extra.countryCodes || [])].filter(Boolean),
+    mark: winnerRow.value,
+    ...extra,
+  })
+
+  const wr = (newRecords || []).find((record) => record.type === 'WR')
+  if (wr) {
+    const previous = [...recordsBefore].reverse().find((record) => record.type === 'WR' && record.eventKey === event.recordKey)
+    const reign = previous ? Math.max(0, state.edition.year - previous.year) : 0
+    const score = previous ? 98 + Math.min(20, reign) : 70
+    push('world-record', score, `The ${formatPerformance(winnerRow.value, event)}`, `${winner.name} did more than win Olympic gold: the ${event.name} world record fell${reign >= 8 ? ` after standing for ${reign} years` : previous ? ` after a ${reign}-year reign` : ''}.`, { previousRecordId: previous?.id || null })
+  }
+
+  const ranking = (state.qualificationRankings?.[event.sportId] || []).find((row) => row.athleteId === winner.id)
+  const favorite = ranked.map((row) => ({ row, athlete: athleteMap.get(row.athleteId) })).filter((item) => item.athlete).sort((a, b) => (b.athlete.currentRating || 0) - (a.athlete.currentRating || 0))[0]
+  const ratingGap = favorite?.athlete ? (favorite.athlete.currentRating || 0) - (winner.currentRating || 0) : 0
+  if ((ranking?.rank || 0) >= 28 || ratingGap >= 9) {
+    push('upset', 96 + Math.min(14, Math.max(0, (ranking?.rank || 28) - 28)), `${winner.name} shocks ${state.edition.host}`, `Ranked ${ranking?.rank ? `#${ranking.rank}` : 'well outside the favorites'} in the qualification picture, ${winner.name} overturns the hierarchy to win ${event.name}.`)
+  }
+
+  const margin = resultMargin(event, winnerRow, silverRow)
+  if (margin != null && margin <= (event.metric === 'time' ? 0.0028 : event.metric === 'distance' || event.metric === 'weight' ? 0.006 : 0.012)) {
+    const silver = athleteMap.get(silverRow.athleteId)
+    push('photo-finish', 82, `A final decided on the edge`, `${winner.name} defeats ${silver?.name || silverRow.displayName} by the narrowest of margins in ${event.name}.`, { athleteIds: [silverRow.athleteId], countryCodes: [silverRow.countryCode], margin })
+  }
+
+  const goldRun = consecutiveGoldRun(winner, event.recordKey, state.edition.year)
+  if (goldRun >= 3) push('dynasty', 108, `${goldRun} Games, one champion`, `${winner.name} wins ${event.name} for a ${goldRun}th consecutive Olympics, turning dominance into Olympic mythology.`, { streak: goldRun })
+  else if (goldRun === 2) push('repeat', 76, `${winner.name} defends the crown`, `Four years later, ${winner.name} is still the Olympic champion in ${event.name}.`, { streak: goldRun })
+
+  const nationHadAnyGold = (state.history || []).some((entry) => (entry.medalResults || []).some((result) => result.podium?.some((row) => row.countryCode === winner.countryCode && row.medal === 'gold'))) || (state.results || []).some((result) => result.podium?.some((row) => row.countryCode === winner.countryCode && row.medal === 'gold'))
+  if (!nationHadAnyGold) {
+    push('national-breakthrough', 104, `${country.name}'s first Olympic gold`, `${winner.name} becomes the athlete who finally puts ${country.name} on top of an Olympic podium.`)
+  } else if (!priorCountrySportMedal(state, winner.countryCode, event.sportId, 'gold')) {
+    push('national-first', 80, `${country.name} opens a new frontier`, `${winner.name} delivers ${country.name}'s first simulated Olympic gold in ${sportById(event.sportId).name}.`)
+  }
+  if (winner.age <= 19) push('prodigy', 74, `A teenage champion arrives`, `At ${winner.age}, ${winner.name} wins Olympic gold and announces a career the world will now follow.`)
+  if (winner.age >= 35) push('veteran', 78, `One more golden chapter`, `At ${winner.age}, ${winner.name} defeats a younger field to win ${event.name}.`)
+  if ((winner.medals?.gold || 0) >= 4) push('multi-gold', 100, `${winner.medals.gold} golds at one Games`, `${winner.name} has become one of the defining athletes of ${state.edition.host} ${state.edition.year}.`, { gamesGolds: winner.medals.gold })
+
+  const eliteFinal = ranked.slice(0, 3).map((row) => athleteMap.get(row.athleteId)).filter(Boolean).filter((athlete) => ['generational', 'legend'].includes(athlete.rarity) || athlete.currentRating >= 92)
+  if (eliteFinal.length >= 2 && margin != null && margin <= 0.01) {
+    push('classic-final', 72, `${event.name}: a final worthy of the era`, `${eliteFinal.slice(0, 3).map((athlete) => athlete.name).join(', ')} turn the Olympic final into an instant reference point.`)
+  }
+
+  const seen = new Set()
+  return candidates.sort((a, b) => b.score - a.score).filter((row) => {
+    if (seen.has(row.type)) return false
+    seen.add(row.type)
+    return true
+  }).slice(0, 2)
+}
+
+function curateIconicMoments(moments, year) {
+  const prior = moments.filter((moment) => moment.year !== year)
+  const current = moments.filter((moment) => moment.year === year).sort((a, b) => b.score - a.score || a.day - b.day)
+  const typeCaps = { 'world-record': 4, upset: 4, 'national-breakthrough': 3, dynasty: 3, 'multi-gold': 3, 'photo-finish': 2, 'classic-final': 2, repeat: 2, prodigy: 2, veteran: 2, 'national-first': 2 }
+  const counts = new Map()
+  const selected = []
+  for (const moment of current) {
+    if (moment.score < 78) continue
+    const count = counts.get(moment.type) || 0
+    const cap = typeCaps[moment.type] || 2
+    if (count >= cap) continue
+    counts.set(moment.type, count + 1)
+    selected.push(moment)
+    if (selected.length >= 12) break
+  }
+  return [...selected, ...prior].slice(0, 900)
+}
+
 function medalTableFromResults(results) {
   const table=new Map()
   results.forEach((result)=>result.podium.forEach((medalist)=>{
@@ -1217,6 +1391,8 @@ export function simulateDay(state, dayToSimulate) {
   }))
   const athleteMap = new Map(athletes.map((athlete) => [athlete.id, athlete]))
   let records = [...state.records]
+  let rivalries = [...(state.rivalries || [])]
+  let iconicMoments = [...(state.iconicMoments || [])]
   const results = [...state.results]
   const roundResults = [...(state.roundResults || [])]
   const news = [...state.news]
@@ -1232,6 +1408,7 @@ export function simulateDay(state, dayToSimulate) {
     const prior = [...roundResults].reverse().find((row) => row.eventId === event.id)
     const priorIds = new Set(prior?.qualifiedIds || [])
     const entries = prior?.qualifiedIds?.length ? baseField.filter((entry) => priorIds.has(entry.athleteId)) : baseField
+    const recordsBeforeRound = records
     const simulation = simulateRound({ edition: state.edition, event, entries, records, random, session })
     const advanceCount = advancementCount(event, session, simulation.ranked.length)
     const qualifiedIds = session.isFinal ? [] : simulation.ranked.slice(0, advanceCount).map((entry) => entry.athleteId)
@@ -1311,6 +1488,21 @@ export function simulateDay(state, dayToSimulate) {
         athlete.careerResults.push({ year: state.edition.year, host: state.edition.host, eventName: event.name, eventKey: event.recordKey, sportId: event.sportId, medal: medalist.medal, value: medalist.value })
       })
     })
+    rivalries = updateRivalriesForFinal({ state: { ...state, rivalries }, event, ranked: simulation.ranked, newRecords: simulation.newRecords, athleteMap, day: dayToSimulate })
+    const newMoments = iconicMomentsForFinal({ state: { ...state, results, rivalries }, event, podium, ranked: simulation.ranked, newRecords: simulation.newRecords, athleteMap, recordsBefore: recordsBeforeRound, day: dayToSimulate })
+    if (newMoments.length) {
+      iconicMoments = curateIconicMoments([...newMoments, ...iconicMoments], state.edition.year)
+      const retainedIds = new Set(iconicMoments.filter((moment) => moment.year === state.edition.year).map((moment) => moment.id))
+      newMoments.filter((moment) => retainedIds.has(moment.id) && moment.score >= 90).forEach((moment) => news.unshift({
+        id: `iconic-${moment.id}`,
+        day: dayToSimulate,
+        category: 'Iconic Moment',
+        headline: moment.title,
+        body: moment.body,
+        sportId: moment.sportId,
+        countryCode: moment.countryCodes?.[0] || null,
+      }))
+    }
     results.push({
       id: `${state.edition.year}-${event.id}`,
       editionYear: state.edition.year,
@@ -1340,6 +1532,8 @@ export function simulateDay(state, dayToSimulate) {
     currentDay: complete ? state.edition.days + 1 : currentDay,
     phase: complete ? 'complete' : 'games',
     medalTable: medalTableFromResults(results),
+    rivalries,
+    iconicMoments,
   }
   if (complete) nextState.magazine = { ...(state.magazine || {}), postGames: buildPostGamesMagazine(nextState, athletes, results) }
   return nextState
@@ -1468,6 +1662,8 @@ function buildStateForEdition({ edition, seed, priorState = null }) {
     ],
     investments,
     medalTable: [],
+    rivalries: priorState?.rivalries || [],
+    iconicMoments: priorState?.iconicMoments || [],
     history: priorState?.history || [],
     programmeChanges: changes,
     hostLegacy: priorState?.hostLegacy || {},
@@ -1636,6 +1832,8 @@ function historyEntryFromState(state) {
     worldEvents: state.featuredWorldEvents || [],
     featuredWorldEvents: state.featuredWorldEvents || [],
     magazine: state.magazine || null,
+    iconicMoments: (state.iconicMoments || []).filter((moment) => moment.year === state.edition.year).slice(0, 80),
+    rivalryHighlights: (state.rivalries || []).filter((row) => row.lastMeeting?.year === state.edition.year).sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 20),
   }
 }
 
@@ -1712,6 +1910,100 @@ export function delegationStats(state) {
   return [...map.values()].map(row=>({...row,sports:row.sports.size,averageRating:round(row.averageRating/row.athletes,1)})).sort((a,b)=>b.athletes-a.athletes)
 }
 
+
+export function getRivalryRows(state) {
+  const lookup = new Map([
+    ...(state.athletes || []),
+    ...(state.careerPool || []),
+    ...(state.athleteArchive || []),
+  ].map((athlete) => [athlete.id, athlete]))
+  return (state.rivalries || []).map((row) => {
+    const athleteA = lookup.get(row.athleteAId)
+    const athleteB = lookup.get(row.athleteBId)
+    const leaderId = row.aWins === row.bWins ? null : row.aWins > row.bWins ? row.athleteAId : row.athleteBId
+    const trailerId = leaderId === row.athleteAId ? row.athleteBId : leaderId === row.athleteBId ? row.athleteAId : null
+    return {
+      ...row,
+      athleteA,
+      athleteB,
+      leaderId,
+      trailerId,
+      leader: leaderId ? lookup.get(leaderId) : null,
+      trailer: trailerId ? lookup.get(trailerId) : null,
+      balance: row.aWins === row.bWins ? 'Even' : `${Math.max(row.aWins, row.bWins)}–${Math.min(row.aWins, row.bWins)}`,
+      meaningful: (row.meetings || 0) >= 2 || ((row.closeFinishes || 0) >= 1 && (row.eliteMeetings || 0) >= 1 && (row.score || 0) >= 44),
+    }
+  }).filter((row) => row.athleteA && row.athleteB)
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.meetings || 0) - (a.meetings || 0))
+}
+
+export function getOlympiadArc(state) {
+  const year = state.edition.year
+  const baseYear = Math.max(1896, year - 3)
+  const competitions = state.qualificationCompetitions || []
+  const records = state.records || []
+  const rankings = Object.values(state.qualificationRankings || {}).flat()
+  const eliteMisses = rankings.filter((row) => !row.qualified && ['generational', 'legend', 'epic'].includes(row.rarity)).length
+  const newcomerIds = state.magazine?.lifeChanges?.spawnedIds || []
+  const recordYears = new Map()
+  records.filter((record) => record.source === 'qualification' && record.year >= year - 3 && record.year < year).forEach((record) => recordYears.set(record.year, (recordYears.get(record.year) || 0) + 1))
+  const byYear = new Map()
+  competitions.forEach((competition) => {
+    const list = byYear.get(competition.year) || []
+    list.push(competition)
+    byYear.set(competition.year, list)
+  })
+  const stages = [
+    { index: 1, year: baseYear, label: 'Reset & rebuild', description: 'Federations reset priorities, veterans decide whether to continue and a new generation enters the pathway.' },
+    { index: 2, year: Math.max(baseYear, year - 2), label: 'Contenders emerge', description: 'Major qualification meets begin separating real medal threats from raw potential.' },
+    { index: 3, year: Math.max(baseYear, year - 1), label: 'Olympic pressure', description: 'Rankings harden, records come under attack and elite athletes can still miss the Games.' },
+    { index: 4, year, label: 'Olympic year', description: `Everything converges on ${state.edition.host}: rivalries, record chases and four years of expectation.` },
+  ]
+  return stages.map((stage) => {
+    const comps = byYear.get(stage.year) || []
+    const biggest = comps.slice().sort((a, b) => (b.participants || 0) - (a.participants || 0))[0]
+    let headline
+    let detail
+    if (stage.index === 1) {
+      headline = newcomerIds.length ? `${newcomerIds.length} elite newcomers enter the cycle` : 'A new Olympic cycle begins'
+      detail = `${(state.featuredWorldEvents || []).length} major developments reshape national programmes.`
+    } else if (stage.index === 2) {
+      headline = biggest ? `${biggest.name} sets the early hierarchy` : 'The first contenders separate from the field'
+      detail = biggest ? `${biggest.participants} athletes competed in ${biggest.hostCity}.` : 'Ratings, form and federation depth begin to matter.'
+    } else if (stage.index === 3) {
+      const wrs = recordYears.get(stage.year) || 0
+      headline = wrs ? `${wrs} world record${wrs === 1 ? '' : 's'} fall before the Games` : `${eliteMisses} elite athletes are left outside the Olympic field`
+      detail = `${rankings.filter((row) => row.qualified).length.toLocaleString()} ranked athletes secure Olympic places across the programme.`
+    } else {
+      const currentMoments = (state.iconicMoments || []).filter((moment) => moment.year === year)
+      headline = state.phase === 'complete' ? `${currentMoments.length} iconic moments define ${state.edition.host}` : state.phase === 'games' ? `Day ${Math.min(state.currentDay, state.edition.days)}: the mythology is being written` : `${state.edition.host} awaits the opening ceremony`
+      detail = state.phase === 'complete' ? `${state.results.length} champions crowned; the cycle is now history.` : `${state.events.length} medal events are waiting to resolve four years of buildup.`
+    }
+    return { ...stage, headline, detail, competitions: comps.length, status: stage.index < 4 ? 'complete' : state.phase === 'complete' ? 'complete' : 'current' }
+  })
+}
+
+function recordChasersFor(state, record, event) {
+  if (!record || !event || !record.standing) return []
+  const candidates = new Map()
+  ;(state.qualificationRankings?.[record.sportId] || []).filter((row) => row.eventKey === record.eventKey && row.value != null).forEach((row) => {
+    if (row.athleteId === record.athleteId) return
+    candidates.set(row.athleteId, { athleteId: row.athleteId, countryCode: row.countryCode, value: row.value, source: 'qualification' })
+  })
+  ;(state.roundResults || []).filter((round) => round.eventKey === record.eventKey).flatMap((round) => round.results || []).forEach((row) => {
+    if (row.athleteId === record.athleteId || row.value == null) return
+    const prior = candidates.get(row.athleteId)
+    const better = !prior || (event.lowerIsBetter ? row.value < prior.value : row.value > prior.value)
+    if (better) candidates.set(row.athleteId, { athleteId: row.athleteId, countryCode: row.countryCode, value: row.value, source: 'olympics' })
+  })
+  const lookup = new Map([...(state.athletes || []), ...(state.careerPool || []), ...(state.athleteArchive || [])].map((athlete) => [athlete.id, athlete]))
+  return [...candidates.values()].map((row) => {
+    const scale = Math.max(1, Math.abs(record.value))
+    const rawGap = event.lowerIsBetter ? row.value - record.value : record.value - row.value
+    return { ...row, athlete: lookup.get(row.athleteId), gap: rawGap, gapPct: rawGap / scale * 100 }
+  }).filter((row) => row.gap >= 0).sort((a, b) => a.gapPct - b.gapPct).slice(0, 3)
+}
+
 export function getRecordRows(state) {
   return state.records.map((record)=>{
     const event=state.events.find(item=>item.recordKey===record.eventKey)||{id:record.eventId,recordKey:record.eventKey,name:record.eventName,metric:record.eventMetric,unit:record.eventUnit,benchmark:record.eventBaseline,sportId:record.sportId,decimals:record.eventMetric==='time'?2:record.eventMetric==='distance'?2:0}
@@ -1720,7 +2012,15 @@ export function getRecordRows(state) {
       .sort((a,b)=>a.year-b.year)
     const next=successors[0]
     const endYear=next?.year||state.edition.year
-    return {...record,event,athlete,duration:Math.max(0,endYear-record.year),standing:!next}
+    const duration=Math.max(0,endYear-record.year)
+    const standing=!next
+    const age=standing ? Math.max(0,state.edition.year-record.year) : duration
+    const previous=state.records.filter(item=>item.eventKey===record.eventKey && item.type===record.type && (item.year<record.year || (item.year===record.year && item.id!==record.id))).sort((a,b)=>b.year-a.year)[0]
+    const mythology = standing
+      ? age >= 16 ? 'Untouchable' : age >= 8 ? 'Era-defining' : age >= 4 ? 'Established' : 'Fresh record'
+      : duration >= 16 ? 'Historic reign' : duration >= 8 ? 'Long reign' : duration >= 4 ? 'Olympiad benchmark' : 'Brief reign'
+    const chasers=standing ? recordChasersFor(state, record, event) : []
+    return {...record,event,athlete,duration,age,standing,previous,mythology,chasers}
   })
 }
 
